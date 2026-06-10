@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta name="game-uuid" content="c9b8ddee-eb37-4a12-baa4-5793c612dd3f" />
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+<title>Block Hop</title>
+<script src="./aigram-bridge.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bangers&family=Luckiest+Guy&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --ink:#15110e; --paper:#fff7e6; --paper2:#ffeec4;
+    --yellow:#ffce2e; --red:#ff4438; --teal:#3fb6ac;
+    --comic:"Bangers","PingFang SC",sans-serif;
+    --pow:"Luckiest Guy","PingFang SC",sans-serif;
+  }
+  html, body {
+    margin:0; height:100%; overflow:hidden; background:#b8d7ea;
+    font-family:-apple-system,"PingFang SC",BlinkMacSystemFont,"Segoe UI",sans-serif;
+    -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;
+    -webkit-tap-highlight-color:transparent;
+  }
+  #wrap { position:fixed; inset:0; overflow:hidden; }
+  #c { display:block; width:100%; height:100%; touch-action:none; }
+
+  .hud { position:fixed; pointer-events:none; z-index:5; }
+
+  #wordmark {
+    top:14px; left:50%; transform:translateX(-50%);
+    font-family:var(--comic); color:var(--yellow);
+    -webkit-text-stroke:3px var(--ink); paint-order:stroke fill;
+    font-size:34px; letter-spacing:.04em;
+    text-shadow:3px 3px 0 var(--ink);
+    transition:opacity .3s, transform .3s;
+  }
+  #wordmark.hidden { opacity:0; transform:translate(-50%, -20px); }
+
+  #dist {
+    top:18px; left:50%; transform:translateX(-50%);
+    font-family:var(--comic); color:var(--ink);
+    background:var(--paper); padding:4px 18px; border-radius:999px;
+    border:3px solid var(--ink); box-shadow:3px 3px 0 var(--ink);
+    font-size:28px; font-variant-numeric:tabular-nums; line-height:1;
+    opacity:0; transition:opacity .25s;
+  }
+  #dist.show { opacity:1; }
+  #dist .lbl {
+    font-size:11px; letter-spacing:.18em; color:#8a7d72;
+    display:block; margin-bottom:1px;
+  }
+
+  #coin {
+    top:18px; left:14px;
+    display:flex; align-items:center; gap:8px;
+    padding:5px 16px 5px 6px; border-radius:999px;
+    background:var(--paper); border:3px solid var(--ink);
+    box-shadow:3px 3px 0 var(--ink);
+    font-family:var(--comic); font-size:24px; color:var(--ink);
+    font-variant-numeric:tabular-nums; letter-spacing:.02em; line-height:1;
+  }
+  #coin .c {
+    width:28px; height:28px; flex:0 0 auto; border-radius:50%;
+    background:var(--yellow); border:2.5px solid var(--ink);
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--comic); font-size:16px;
+  }
+
+  #hint {
+    bottom:46px; left:0; right:0;
+    text-align:center; color:#fff;
+    font-family:var(--comic); font-size:22px;
+    text-shadow:2px 2px 0 rgba(21,17,14,.55);
+    opacity:0; transition:opacity .4s;
+    letter-spacing:.04em;
+  }
+  #hint.show { opacity:1; animation:pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse {
+    0%,100%{ transform:translateY(0); }
+    50%{ transform:translateY(-6px); }
+  }
+
+  #over {
+    position:fixed; inset:0; display:none;
+    align-items:center; justify-content:center;
+    background:rgba(21,17,14,.55); z-index:30; padding:24px;
+    pointer-events:auto;
+  }
+  #over.show { display:flex; }
+  #over .card {
+    background:var(--paper); color:var(--ink);
+    padding:28px 32px 22px; border-radius:8px;
+    border:4px solid var(--ink); box-shadow:6px 6px 0 var(--ink);
+    text-align:center; max-width:340px; width:100%;
+    transform:rotate(-1deg);
+  }
+  #over h1 {
+    font-family:var(--pow); font-size:52px; color:var(--red);
+    -webkit-text-stroke:3px var(--ink); paint-order:stroke fill;
+    margin:0 0 4px; letter-spacing:.02em; transform:rotate(2deg);
+  }
+  #over .reason {
+    font-family:var(--comic); font-size:20px; color:var(--ink);
+    margin-bottom:14px; letter-spacing:.06em;
+  }
+  #over .row {
+    display:flex; justify-content:space-between; align-items:baseline;
+    padding:6px 4px; border-bottom:1.5px dashed rgba(21,17,14,.25);
+    font-family:var(--comic); font-size:22px; line-height:1.1;
+  }
+  #over .row:last-of-type { border-bottom:none; margin-bottom:10px; }
+  #over .row .k { color:#8a7d72; font-size:13px; letter-spacing:.16em; }
+  #over .row .v { font-variant-numeric:tabular-nums; }
+  #over .row.best .v { color:var(--red); }
+  #over button {
+    margin-top:14px; padding:12px 26px; border:3px solid var(--ink);
+    background:var(--yellow); color:var(--ink);
+    font-family:var(--comic); font-size:26px; letter-spacing:.04em;
+    border-radius:999px; box-shadow:4px 4px 0 var(--ink); cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+  }
+  #over button:active { transform:translate(2px, 2px); box-shadow:2px 2px 0 var(--ink); }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c"></canvas>
+  <div id="wordmark" class="hud">BLOCK HOP</div>
+  <div id="dist" class="hud"><span class="lbl">DISTANCE</span><span id="distN">0</span></div>
+  <div id="coin" class="hud"><span class="c">$</span><span id="coinN">0</span></div>
+  <div id="hint" class="hud">Tap to hop</div>
+</div>
+
+<div id="over">
+  <div class="card">
+    <h1>SQUISHED!</h1>
+    <div class="reason" id="reason">flattened by a yellow cab</div>
+    <div class="row"><span class="k">DISTANCE</span><span class="v" id="finalDist">0</span></div>
+    <div class="row best"><span class="k">BEST</span><span class="v" id="finalBest">0</span></div>
+    <div class="row"><span class="k">COINS</span><span class="v" id="finalCoins">0</span></div>
+    <button id="again">Hop again</button>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+
+<script type="module">
+import { startGame } from './game.js';
+
+const $ = (s) => document.querySelector(s);
+const canvas = $('#c');
+const distEl = $('#distN');
+const coinEl = $('#coinN');
+const overEl = $('#over');
+const wordmarkEl = $('#wordmark');
+const distBoxEl = $('#dist');
+const hintEl = $('#hint');
+
+const REASONS = {
+  car:    'flattened by a yellow cab',
+  train:  'caught by the express train',
+  drown:  'into the East River you go',
+  drift:  'log drifted you off the map',
+  void:   'stepped into the void',
+  camera: 'the city left without you',
+};
+
+let firstHopSeen = false;
+
+const hud = {
+  setDistance(n){
+    distEl.textContent = String(n);
+    if (n > 0 && !firstHopSeen){
+      firstHopSeen = true;
+      wordmarkEl.classList.add('hidden');
+      distBoxEl.classList.add('show');
+      hintEl.classList.remove('show');
+    }
+  },
+  setCoin(n){ coinEl.textContent = String(n); },
+  setDead(payload){
+    if (!payload){
+      overEl.classList.remove('show');
+      // restore title state
+      firstHopSeen = false;
+      wordmarkEl.classList.remove('hidden');
+      distBoxEl.classList.remove('show');
+      hintEl.classList.add('show');
+      distEl.textContent = '0';
+      return;
+    }
+    $('#reason').textContent = REASONS[payload.reason] || 'gone';
+    $('#finalDist').textContent = String(payload.distance);
+    $('#finalBest').textContent = String(payload.best);
+    $('#finalCoins').textContent = String(payload.coins);
+    overEl.classList.add('show');
+  },
+  setReady(){
+    hintEl.classList.add('show');
+  },
+};
+
+const api = startGame({ canvas, hud });
+
+$('#again').addEventListener('click', () => api.restart());
+</script>
+</body>
+</html>
