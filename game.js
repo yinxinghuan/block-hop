@@ -31,7 +31,7 @@ const player = {
   hopFromX: 0, hopFromZ: 0, hopToX: 0, hopToZ: 0,
   dead: false,
   riding: null,                 // { log, offsetX } when on a river log
-  facing: 0,                    // y-rot in radians, 0 = +Z forward
+  facing: Math.PI,              // mesh y-rot target; chars natively face +Z, so PI = world forward (-Z)
 };
 
 let coins = 0;
@@ -526,16 +526,16 @@ function makeCoin(){
 }
 
 // ── Vehicle builders ─────────────────────────────────────────────────────────
-// Pattern: thin chassis + body lower + body upper cabin + roof; add windshield/
-// rear glass slabs, side windows, headlights/taillights/license/handles/mirrors.
+// Crossy Road register: 2-3 box silhouette + glass-box cabin + chunky round
+// wheels that poke out past the body. 1-2 signature details per vehicle, max.
 function _addWheels(g, list, tireR, tireT, hubColor){
-  const tireMat = mat(0x1a1612);
+  const tireMat = mat(0x241f1c);
   const hubMat  = mat(hubColor || 0xb5b0a8);
   for (const [x, z] of list){
-    const tire = new THREE.Mesh(new THREE.CylinderGeometry(tireR, tireR, tireT, 12), tireMat);
+    const tire = new THREE.Mesh(new THREE.CylinderGeometry(tireR, tireR, tireT, 14), tireMat);
     tire.rotation.z = Math.PI/2; tire.position.set(x, tireR, z);
     g.add(tire);
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(tireR * 0.45, tireR * 0.45, tireT + 0.02, 8), hubMat);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(tireR * 0.5, tireR * 0.5, tireT + 0.03, 10), hubMat);
     hub.rotation.z = Math.PI/2; hub.position.set(x, tireR, z);
     g.add(hub);
   }
@@ -543,66 +543,27 @@ function _addWheels(g, list, tireR, tireT, hubColor){
 function makeTaxi(){
   const g = new THREE.Group();
   const yellow = 0xffce2e;
-  const yDark  = darken(yellow, 0.78);
   const glass  = 0x9bcfe0;
-  // chassis
-  g.add(box(2.00, 0.16, 0.92, 0x2a221c, 0, 0.14, 0));
-  // body lower
-  g.add(box(1.92, 0.30, 0.88, yellow, 0, 0.37, 0));
-  // body shoulder
-  g.add(box(1.58, 0.18, 0.84, yellow, -0.08, 0.61, 0));
-  // cabin / roof
-  g.add(box(1.05, 0.28, 0.78, yellow, -0.10, 0.84, 0));
-  // windshield + rear glass (front faces of cabin)
-  g.add(box(0.04, 0.26, 0.76, glass, 0.43, 0.84, 0));
-  g.add(box(0.04, 0.26, 0.76, glass, -0.63, 0.84, 0));
-  // side windows
-  for (const z of [0.39, -0.39]){
-    g.add(box(0.92, 0.22, 0.04, glass, -0.10, 0.85, z));
-  }
-  // hood + trunk soft creases
-  g.add(box(0.46, 0.04, 0.84, yDark, 0.70, 0.53, 0));
-  g.add(box(0.40, 0.04, 0.84, yDark, -1.00 + 0.20, 0.53, 0));
-  // headlights (warm white)
-  for (const z of [0.30, -0.30]){
-    g.add(box(0.06, 0.10, 0.16, 0xfff4c8, 0.99, 0.42, z));
-  }
-  // grille strip
-  g.add(box(0.04, 0.10, 0.42, 0x2a221c, 1.00, 0.30, 0));
-  // taillights (red)
-  for (const z of [0.30, -0.30]){
-    g.add(box(0.06, 0.10, 0.16, 0xe04030, -0.99, 0.42, z));
-  }
-  // bumpers
-  g.add(box(0.06, 0.08, 0.82, 0x1a1612, 1.00, 0.26, 0));
-  g.add(box(0.06, 0.08, 0.82, 0x1a1612, -1.00, 0.26, 0));
-  // license plates
-  g.add(box(0.04, 0.08, 0.30, 0xf2efe2, 1.02, 0.30, 0));
-  g.add(box(0.04, 0.08, 0.30, 0xf2efe2, -1.02, 0.30, 0));
-  // checker band (between body lower and shoulder)
+  // body (one chunky slab)
+  g.add(box(1.95, 0.42, 0.92, yellow, 0, 0.45, 0));
+  // checker band — signature #1
   for (let i = 0; i < 9; i++){
     const cc = (i % 2 === 0) ? 0x15110e : 0xffffff;
-    g.add(box(0.20, 0.07, 0.90, cc, -0.86 + i * 0.215, 0.225, 0));
+    g.add(box(0.213, 0.10, 0.94, cc, -0.852 + i * 0.213, 0.32, 0));
   }
-  // door handles
-  for (const z of [0.43, -0.43]){
-    g.add(box(0.20, 0.03, 0.02, 0x15110e, -0.10, 0.50, z));
+  // cabin = glass box, roof slab on top (windows read on all 4 sides for free)
+  g.add(box(1.00, 0.28, 0.80, glass, -0.10, 0.80, 0));
+  g.add(box(1.10, 0.08, 0.88, yellow, -0.10, 0.98, 0));
+  // TAXI roof sign — signature #2
+  g.add(box(0.50, 0.16, 0.20, 0xfff7e6, -0.10, 1.10, 0));
+  g.add(box(0.42, 0.09, 0.02, 0x15110e, -0.10, 1.11, 0.105));
+  g.add(box(0.42, 0.09, 0.02, 0x15110e, -0.10, 1.11, -0.105));
+  // headlights / taillights
+  for (const z of [0.30, -0.30]){
+    g.add(box(0.05, 0.10, 0.16, 0xfff4c8, 0.99, 0.48, z));
+    g.add(box(0.05, 0.10, 0.16, 0xe04030, -0.99, 0.48, z));
   }
-  // side mirrors
-  for (const z of [0.49, -0.49]){
-    g.add(box(0.10, 0.06, 0.10, yellow, 0.40, 0.68, z));
-  }
-  // wheels
-  _addWheels(g, [[0.70, 0.45],[0.70,-0.45],[-0.70, 0.45],[-0.70,-0.45]], 0.21, 0.22, 0xd0c8b0);
-  // wheel wells (dark cutout)
-  for (const [x, z] of [[0.70, 0.46],[0.70,-0.46],[-0.70, 0.46],[-0.70,-0.46]]){
-    g.add(box(0.50, 0.18, 0.06, 0x1a1612, x, 0.21, z));
-  }
-  // TAXI roof sign (lit)
-  g.add(box(0.54, 0.18, 0.22, 0xfff7e6, -0.20, 1.07, 0));
-  // "TAXI" black faces (each side)
-  g.add(box(0.46, 0.10, 0.02, 0x15110e, -0.20, 1.08, 0.115));
-  g.add(box(0.46, 0.10, 0.02, 0x15110e, -0.20, 1.08, -0.115));
+  _addWheels(g, [[0.65, 0.45],[0.65,-0.45],[-0.65, 0.45],[-0.65,-0.45]], 0.24, 0.26, 0xd0c8b0);
   g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
   return g;
 }
@@ -610,58 +571,16 @@ function makeSedan(){
   const g = new THREE.Group();
   const palette = [0xe0483b, 0x36a3ec, 0x4fae44, 0xb05de8, 0xe89534, 0x6b59c8, 0xf6f1e6];
   const bodyCol = palette[Math.floor(Math.random()*palette.length)];
-  const bodyDark = darken(bodyCol, 0.72);
   const glass = 0x9bcfe0;
-  // chassis
-  g.add(box(1.82, 0.14, 0.86, 0x2a221c, 0, 0.12, 0));
-  // body lower
-  g.add(box(1.74, 0.28, 0.84, bodyCol, 0, 0.33, 0));
-  // shoulder
-  g.add(box(1.40, 0.16, 0.80, bodyCol, -0.06, 0.55, 0));
-  // roof
-  g.add(box(0.95, 0.26, 0.72, bodyCol, -0.06, 0.74, 0));
-  // windshield + rear
-  g.add(box(0.04, 0.22, 0.72, glass, 0.43, 0.74, 0));
-  g.add(box(0.04, 0.22, 0.72, glass, -0.55, 0.74, 0));
-  // side windows
-  for (const z of [0.37, -0.37]){
-    g.add(box(0.85, 0.20, 0.04, glass, -0.06, 0.75, z));
-  }
-  // hood crease
-  g.add(box(0.42, 0.04, 0.78, bodyDark, 0.60, 0.49, 0));
-  // headlights
+  // body + glass cabin + roof — that's the whole car
+  g.add(box(1.75, 0.40, 0.88, bodyCol, 0, 0.42, 0));
+  g.add(box(0.95, 0.26, 0.74, glass, -0.06, 0.75, 0));
+  g.add(box(1.04, 0.08, 0.82, bodyCol, -0.06, 0.92, 0));
   for (const z of [0.28, -0.28]){
-    g.add(box(0.06, 0.08, 0.16, 0xfff4c8, 0.90, 0.38, z));
+    g.add(box(0.05, 0.09, 0.15, 0xfff4c8, 0.89, 0.45, z));
+    g.add(box(0.05, 0.09, 0.15, 0xe04030, -0.89, 0.45, z));
   }
-  // grille
-  g.add(box(0.04, 0.08, 0.36, 0x1a1612, 0.91, 0.28, 0));
-  // taillights
-  for (const z of [0.28, -0.28]){
-    g.add(box(0.06, 0.08, 0.14, 0xe04030, -0.90, 0.38, z));
-  }
-  // bumpers
-  g.add(box(0.06, 0.08, 0.80, 0x1a1612, 0.92, 0.24, 0));
-  g.add(box(0.06, 0.08, 0.80, 0x1a1612, -0.92, 0.24, 0));
-  // license plate front + rear
-  g.add(box(0.04, 0.07, 0.26, 0xf2efe2, 0.94, 0.28, 0));
-  g.add(box(0.04, 0.07, 0.26, 0xf2efe2, -0.94, 0.28, 0));
-  // door handles
-  for (const z of [0.42, -0.42]){
-    g.add(box(0.18, 0.03, 0.02, 0x1a1612, -0.06, 0.46, z));
-  }
-  // side mirrors
-  for (const z of [0.46, -0.46]){
-    g.add(box(0.09, 0.06, 0.09, bodyCol, 0.36, 0.62, z));
-  }
-  // antenna (50%)
-  if (Math.random() < 0.5){
-    g.add(box(0.02, 0.20, 0.02, 0x1a1612, -0.45, 0.95, 0));
-  }
-  // wheels
-  _addWheels(g, [[0.55, 0.42],[0.55,-0.42],[-0.55, 0.42],[-0.55,-0.42]], 0.19, 0.22, 0xa8a09a);
-  for (const [x, z] of [[0.55, 0.43],[0.55,-0.43],[-0.55, 0.43],[-0.55,-0.43]]){
-    g.add(box(0.45, 0.18, 0.06, 0x1a1612, x, 0.19, z));
-  }
+  _addWheels(g, [[0.58, 0.42],[0.58,-0.42],[-0.58, 0.42],[-0.58,-0.42]], 0.22, 0.24, 0xa8a09a);
   g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
   return g;
 }
@@ -669,62 +588,22 @@ function makeTruck(){
   const g = new THREE.Group();
   const cabPalette = [0xf4f1e8, 0xb45642, 0x4e6d8f, 0x9c7e5a, 0xe4523c];
   const cabCol = cabPalette[Math.floor(Math.random()*cabPalette.length)];
-  const cabDark = darken(cabCol, 0.80);
   const glass = 0x9bcfe0;
-  // chassis
-  g.add(box(2.55, 0.16, 0.96, 0x1a1612, 0, 0.14, 0));
-  // cab body
-  g.add(box(0.92, 0.78, 0.92, cabCol, 0.80, 0.52, 0));
-  // cab nose (slightly forward + lower)
-  g.add(box(0.12, 0.55, 0.92, cabDark, 1.30, 0.42, 0));
-  // cab roof crease
-  g.add(box(0.92, 0.06, 0.92, cabDark, 0.80, 0.92, 0));
-  // cargo box
-  g.add(box(1.50, 1.20, 0.96, 0xd0c6b0, -0.45, 0.71, 0));
-  // cargo panel vertical seams
-  for (const x of [-1.00, -0.45, 0.10]){
-    g.add(box(0.02, 1.12, 0.98, 0x8e8470, x, 0.71, 0));
+  // cab: body + glass band + roof
+  g.add(box(0.95, 0.50, 0.95, cabCol, 0.85, 0.45, 0));
+  g.add(box(0.85, 0.26, 0.82, glass, 0.83, 0.83, 0));
+  g.add(box(0.95, 0.08, 0.90, darken(cabCol, 0.8), 0.85, 1.00, 0));
+  // cargo box (big clean slab) + darker rear door panel
+  g.add(box(1.55, 1.10, 0.98, 0xd8cfba, -0.45, 0.77, 0));
+  g.add(box(0.03, 0.95, 0.86, 0x9a8c70, -1.23, 0.72, 0));
+  // chrome exhaust stack — signature
+  g.add(box(0.09, 0.72, 0.09, 0xc8c2b0, 0.34, 0.86, 0.40));
+  g.add(box(0.12, 0.06, 0.12, 0x241f1c, 0.34, 1.24, 0.40));
+  // headlights
+  for (const z of [0.32, -0.32]){
+    g.add(box(0.05, 0.11, 0.16, 0xfff4c8, 1.33, 0.40, z));
   }
-  // cargo top + bottom trim
-  g.add(box(1.54, 0.06, 0.98, 0x8e8470, -0.45, 1.34, 0));
-  g.add(box(1.54, 0.06, 0.98, 0x8e8470, -0.45, 0.14, 0));
-  // back doors
-  g.add(box(0.02, 1.00, 0.86, 0x9a8c70, -1.20, 0.65, 0));
-  g.add(box(0.04, 0.06, 0.04, 0x1a1612, -1.22, 0.65, 0));        // handle
-  // cab windshield
-  g.add(box(0.04, 0.30, 0.82, glass, 1.27, 0.68, 0));
-  // cab side windows
-  for (const z of [0.43, -0.43]){
-    g.add(box(0.62, 0.26, 0.04, glass, 0.85, 0.70, z));
-  }
-  // headlights + turn signal
-  for (const z of [0.34, -0.34]){
-    g.add(box(0.06, 0.10, 0.16, 0xfff4c8, 1.34, 0.32, z));
-    g.add(box(0.04, 0.06, 0.10, 0xf2a13a, 1.34, 0.18, z));
-  }
-  // grille
-  g.add(box(0.04, 0.18, 0.30, 0x1a1612, 1.35, 0.30, 0));
-  // taillights
-  for (const z of [0.36, -0.36]){
-    g.add(box(0.04, 0.16, 0.14, 0xe04030, -1.21, 0.42, z));
-  }
-  // cab handles
-  for (const z of [0.47, -0.47]){
-    g.add(box(0.10, 0.03, 0.02, 0x1a1612, 0.62, 0.50, z));
-  }
-  // big truck mirrors
-  for (const z of [0.50, -0.50]){
-    g.add(box(0.04, 0.30, 0.16, 0x1a1612, 1.18, 0.66, z));
-    g.add(box(0.06, 0.20, 0.14, 0xb5b0a8, 1.18, 0.68, z));
-  }
-  // exhaust pipe (chrome stack behind cab)
-  g.add(box(0.09, 0.70, 0.09, 0xc8c2b0, 0.36, 0.88, 0.40));
-  g.add(box(0.12, 0.06, 0.12, 0x1a1612, 0.36, 1.24, 0.40));  // tip cap
-  // bumpers
-  g.add(box(0.06, 0.10, 0.96, 0x1a1612, 1.36, 0.20, 0));
-  g.add(box(0.06, 0.10, 0.96, 0x1a1612, -1.22, 0.20, 0));
-  // wheels (6: front 2 + dual rear 4)
-  _addWheels(g, [[0.95, 0.5],[0.95,-0.5],[-0.40, 0.5],[-0.40,-0.5],[-1.00, 0.5],[-1.00,-0.5]], 0.22, 0.22, 0x8a857f);
+  _addWheels(g, [[0.92, 0.5],[0.92,-0.5],[-0.40, 0.5],[-0.40,-0.5],[-1.00, 0.5],[-1.00,-0.5]], 0.25, 0.26, 0x8a857f);
   g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
   return g;
 }
@@ -762,43 +641,22 @@ function makeLog(){
 
 function makeTrainCar(){
   const g = new THREE.Group();
-  // chassis
-  g.add(box(3.60, 0.12, 0.90, 0x1f1d22, 0, 0.10, 0));
-  // body
-  g.add(box(3.60, 0.78, 0.88, 0x8b8f98, 0, 0.55, 0));
-  // roof curve fake (slightly narrower upper)
-  g.add(box(3.40, 0.10, 0.92, 0x6f747e, 0, 0.99, 0));
-  // red MTA stripe with white edges
-  g.add(box(3.60, 0.04, 0.92, 0xfff7e6, 0, 0.34, 0));
-  g.add(box(3.60, 0.10, 0.92, 0xe0483b, 0, 0.29, 0));
-  g.add(box(3.60, 0.04, 0.92, 0xfff7e6, 0, 0.24, 0));
-  // windows (long band on both sides)
-  for (const z of [0.45, -0.45]){
-    for (let i = -1; i <= 1; i++){
-      g.add(box(0.62, 0.26, 0.04, 0x6cb8d1, i * 1.05, 0.74, z));
-    }
+  // dark undercarriage gap + silver body + roof
+  g.add(box(3.60, 0.14, 0.80, 0x1f1d22, 0, 0.12, 0));
+  g.add(box(3.60, 0.78, 0.90, 0x9094a0, 0, 0.58, 0));
+  g.add(box(3.44, 0.10, 0.94, 0x6f747e, 0, 1.02, 0));
+  // red MTA stripe — signature #1
+  g.add(box(3.62, 0.12, 0.92, 0xe0483b, 0, 0.33, 0));
+  // one long window band per side (no per-window slicing)
+  for (const z of [0.46, -0.46]){
+    g.add(box(2.90, 0.26, 0.04, 0x6cb8d1, 0, 0.76, z));
   }
-  // door panels between windows
-  for (const z of [0.45, -0.45]){
-    for (const x of [-0.50, 0.50]){
-      g.add(box(0.04, 0.40, 0.04, 0x1a1612, x, 0.60, z));
-    }
-  }
-  // headlight (front-only, but car symmetric — give both ends a light)
-  for (const x of [1.78, -1.78]){
-    g.add(box(0.04, 0.10, 0.18, 0xfff4c8, x, 0.55, 0));
-  }
-  // route letter circle (F line)
+  // route letter circle (F line) — signature #2
   for (const x of [1.50, -1.50]){
-    const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.02, 12), mat(0xf2c14e));
-    ring.rotation.x = Math.PI / 2; ring.position.set(x, 0.68, 0.46);
+    const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.02, 12), mat(0xf2c14e));
+    ring.rotation.x = Math.PI / 2; ring.position.set(x, 0.51, 0.46);
     g.add(ring);
   }
-  // bumpers / couplers
-  g.add(box(0.04, 0.18, 0.40, 0x1a1612, 1.82, 0.30, 0));
-  g.add(box(0.04, 0.18, 0.40, 0x1a1612, -1.82, 0.30, 0));
-  // wheels (4 in two trucks)
-  _addWheels(g, [[-1.20, 0.42],[-1.20,-0.42],[1.20, 0.42],[1.20,-0.42]], 0.20, 0.22, 0x6a6660);
   g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
   return g;
 }
@@ -1018,7 +876,7 @@ function tick(){
     // slight squash anim
     playerMesh.scale.y = PLAYER_SCALE * (1 - 0.18 * Math.sin(Math.PI * t));
     // smooth turn toward facing
-    playerMesh.rotation.y = lerpAngle(playerMesh.rotation.y, Math.PI + player.facing, 12 * dt);
+    playerMesh.rotation.y = lerpAngle(playerMesh.rotation.y, player.facing, 12 * dt);
     if (t >= 1){
       player.hopping = false;
       playerMesh.scale.y = PLAYER_SCALE;
@@ -1175,7 +1033,7 @@ function restart(){
   for (let gz = -4; gz <= 14; gz++) addLane(gz);
   player.gx = 0; player.gz = 0; player.worldX = 0;
   player.hopping = false; player.dead = false; player.riding = null;
-  player.facing = 0;
+  player.facing = Math.PI;
   playerMesh.position.set(0, 0, 0);
   playerMesh.rotation.set(0, Math.PI, 0);
   playerMesh.scale.set(PLAYER_SCALE, PLAYER_SCALE, PLAYER_SCALE);
