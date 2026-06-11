@@ -68,7 +68,7 @@
   }
 
   #hint {
-    bottom:calc(160px + env(safe-area-inset-bottom)); left:0; right:0;
+    bottom:calc(218px + env(safe-area-inset-bottom)); left:0; right:0;
     text-align:center; color:#fff;
     font-family:var(--comic); font-size:22px;
     text-shadow:2px 2px 0 rgba(21,17,14,.55);
@@ -142,7 +142,7 @@
     bottom:calc(22px + env(safe-area-inset-bottom));
     display:grid;
     grid-template-columns:repeat(3, 54px);
-    grid-template-rows:repeat(2, 54px);
+    grid-template-rows:repeat(3, 54px);
     gap:8px;
   }
   #dpad.hidden { display:none; }
@@ -157,9 +157,12 @@
   #dpad button svg { width:24px; height:24px; pointer-events:none; display:block; }
   #dpad button svg polygon { fill:var(--ink); }
   #dpad button:active { transform:translate(2px,2px); box-shadow:1px 1px 0 var(--ink); }
+  /* Classic cross — empty center cell keeps Up and Down far apart, so a
+     low-landing Up press can never hit Down (that misread is lethal). */
   #bUp    { grid-column:2; grid-row:1; }
   #bLeft  { grid-column:1; grid-row:2; }
   #bRight { grid-column:3; grid-row:2; }
+  #bDown  { grid-column:2; grid-row:3; }
 
   /* Roster open button — top-right pill */
   #rosterBtn {
@@ -251,6 +254,7 @@
     <button id="bUp" aria-label="Forward"><svg viewBox="0 0 24 24"><polygon points="12,4 21,20 3,20"/></svg></button>
     <button id="bLeft" aria-label="Left"><svg viewBox="0 0 24 24"><polygon points="4,12 20,3 20,21"/></svg></button>
     <button id="bRight" aria-label="Right"><svg viewBox="0 0 24 24"><polygon points="20,12 4,3 4,21"/></svg></button>
+    <button id="bDown" aria-label="Back"><svg viewBox="0 0 24 24"><polygon points="12,20 21,4 3,4"/></svg></button>
   </div>
 </div>
 
@@ -361,6 +365,7 @@ function bindHop(sel, dx, dz){
 bindHop('#bUp', 0, 1);
 bindHop('#bLeft', -1, 0);
 bindHop('#bRight', 1, 0);
+bindHop('#bDown', 0, -1);
 
 $('#again').addEventListener('click', () => api.restart());
 

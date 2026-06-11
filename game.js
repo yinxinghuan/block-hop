@@ -1148,6 +1148,15 @@ function attachInput(){
       else tryHop(0, dy > 0 ? -1 : 1);
       return;
     }
+    // Mistouch shield: a static tap near the on-screen D-pad is a missed
+    // button press — swallowing it beats reading it as a directional hop
+    // (bottom-left taps would otherwise parse as back/left, which kills).
+    const dpadEl = document.getElementById('dpad');
+    if (dpadEl){
+      const r = dpadEl.getBoundingClientRect();
+      if (e.clientX > r.left - 30 && e.clientX < r.right + 30 &&
+          e.clientY > r.top  - 30 && e.clientY < r.bottom + 30) return;
+    }
     // Static tap: decide by where on the canvas they tapped, relative to its center.
     const rect = canvas.getBoundingClientRect();
     const cx = e.clientX - (rect.left + rect.width / 2);
