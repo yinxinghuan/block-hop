@@ -18,7 +18,8 @@ const PLAYER_SCALE = 0.55;       // bumped from 0.42 so character reads on small
 // ── Globals ───────────────────────────────────────────────────────────────────
 let scene, camera, renderer, canvas;
 let clock;
-let playerMesh, playerRig, playerShadow;
+let playerMesh, playerRig;
+let sun, sunTarget;
 let lanesByGz = new Map();      // gz → laneRecord
 let furthestAhead = -Infinity;  // largest gz that has a lane
 let furthestBehind = Infinity;  // smallest gz that has a lane
@@ -51,27 +52,42 @@ export function startGame(opts){
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0xb8d7ea);
-  scene.fog = new THREE.Fog(0xb8d7ea, 22, 38);
+  scene.fog = new THREE.Fog(0xb8d7ea, 28, 44);
 
-  // Iso-ish orthographic camera, follows player on Z
+  // Mostly top-down orthographic camera (tiny yaw to keep voxel depth cue,
+  // but +Z forward maps to "screen up" so touch swipes are unambiguous).
   const aspect = canvas.clientWidth / canvas.clientHeight;
   camera = new THREE.OrthographicCamera(
     -VIEW_H * aspect, VIEW_H * aspect, VIEW_H, -VIEW_H, 0.1, 200
   );
-  camera.position.set(10, 12, 12);
+  camera.position.set(2, 14, 11);
   camera.lookAt(0, 0, 0);
 
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
-  // Real shadowMap is jagged on voxel cubes + costly; use baked contact shadows instead.
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-  // Sky-ish ambient + sunny key + soft fill (no real-time shadows; contact shadows below).
-  scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-  const sun = new THREE.DirectionalLight(0xffffff, 0.85);
-  sun.position.set(8, 14, 6);
+  // Ambient + warm key sun (real shadowMap) + cool fill.
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  sun = new THREE.DirectionalLight(0xfff4d6, 1.05);
+  sun.position.set(8, 16, 6);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left   = -12;
+  sun.shadow.camera.right  =  12;
+  sun.shadow.camera.top    =  14;
+  sun.shadow.camera.bottom = -10;
+  sun.shadow.camera.near   = 1;
+  sun.shadow.camera.far    = 50;
+  sun.shadow.bias        = -0.0006;
+  sun.shadow.normalBias  =  0.02;
   scene.add(sun);
-  const fill = new THREE.DirectionalLight(0xc9e2ff, 0.30);
+  sunTarget = new THREE.Object3D();
+  scene.add(sunTarget);
+  sun.target = sunTarget;
+  const fill = new THREE.DirectionalLight(0xc9e2ff, 0.28);
   fill.position.set(-6, 8, -4);
   scene.add(fill);
 
@@ -105,17 +121,14 @@ export function startGame(opts){
 
 function buildPlayer(charKey){
   if (playerMesh) scene.remove(playerMesh);
-  if (playerShadow) scene.remove(playerShadow);
   const factory = CHARACTERS[charKey] || CHARACTERS.shopkeeper;
   playerMesh = factory();
   playerMesh.scale.setScalar(PLAYER_SCALE);
   playerMesh.position.set(0, 0, 0);
   playerMesh.rotation.y = Math.PI;   // face +Z (forward in our world)
   playerRig = playerMesh.userData.rig || null;
+  playerMesh.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
   scene.add(playerMesh);
-  // Independent contact shadow, lives in world space so hop doesn't lift it.
-  playerShadow = makeShadow(0.65);
-  scene.add(playerShadow);
 }
 
 function onResize(){
@@ -128,34 +141,6 @@ function onResize(){
   camera.updateProjectionMatrix();
 }
 
-// ── Contact shadow (baked radial-alpha disc on the ground plane) ─────────────
-// Reused across all entities. Cheap, jaggy-free, gives every prop space anchor.
-let _shadowTex = null;
-function shadowTex(){
-  if (_shadowTex) return _shadowTex;
-  const cv = document.createElement('canvas');
-  cv.width = cv.height = 128;
-  const ctx = cv.getContext('2d');
-  const g = ctx.createRadialGradient(64, 64, 4, 64, 64, 62);
-  g.addColorStop(0,    'rgba(0,0,0,0.55)');
-  g.addColorStop(0.45, 'rgba(0,0,0,0.28)');
-  g.addColorStop(1,    'rgba(0,0,0,0)');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 128);
-  _shadowTex = new THREE.CanvasTexture(cv);
-  return _shadowTex;
-}
-function makeShadow(radius){
-  const m = new THREE.Mesh(
-    new THREE.PlaneGeometry(radius * 2, radius * 2),
-    new THREE.MeshBasicMaterial({
-      map: shadowTex(), transparent: true, depthWrite: false, opacity: 1.0,
-    })
-  );
-  m.rotation.x = -Math.PI / 2;
-  m.position.y = 0.022;       // just above tile to avoid z-fight
-  m.renderOrder = 1;
-  return m;
-}
 
 // ── Coordinate helpers ────────────────────────────────────────────────────────
 // +gz is forward direction; world Z is negative gz so the camera (placed +Z)
@@ -194,16 +179,47 @@ function addLane(gz){
   const lane = { gz, kind, group: new THREE.Group(), mobs: [],
     dir: Math.random() < 0.5 ? -1 : 1, speed: 0, spawnEvery: 0, spawnT: 0, decor: [] };
 
-  // Lane tile geometry: a wide flat box across X
-  const tileMat = laneTileMat(kind);
+  // Lane tile geometry — top "skin" (grass/asphalt/water/wood) thin slab,
+  // plus a thick dirt slab below to give the offscreen edge a cliff/cross-section look.
+  const tileMat   = laneTileMat(kind);
   const baseHeight = kind === 'river' ? 0.10 : 0.20;
+  const topY       = kind === 'river' ? -0.08 : 0.20;   // y of top surface
+  const W          = 2 * KILL_X + 4;
   const base = new THREE.Mesh(
-    new THREE.BoxGeometry(2 * KILL_X + 4, baseHeight, TILE),
+    new THREE.BoxGeometry(W, baseHeight, TILE),
     tileMat
   );
-  base.position.set(0, baseHeight/2 - (kind === 'river' ? 0.18 : 0), wZ(gz));
+  base.position.set(0, topY - baseHeight/2, wZ(gz));
   base.receiveShadow = true;
   lane.group.add(base);
+
+  // Grass gets a thin dark soil-horizon band right under the green —
+  // reads as the root layer of a sod stratum when seen from the side.
+  if (kind === 'grass'){
+    const horizonH = 0.06;
+    const horizon = new THREE.Mesh(
+      new THREE.BoxGeometry(W + 0.02, horizonH, TILE + 0.02),
+      mat(0x4a3119)
+    );
+    horizon.position.set(0, topY - baseHeight - horizonH/2, wZ(gz));
+    horizon.receiveShadow = true;
+    lane.group.add(horizon);
+  }
+
+  // Thick dirt slab (or deep water for river) extending down beyond the
+  // viewport — kills the floating-strip look and makes the offscreen
+  // edge read as a slice of earth, not a hovering plank.
+  const dirtCol = kind === 'river' ? 0x1f4a72 : 0x8b6a44;
+  const dirtH   = 1.6;
+  const dirt = new THREE.Mesh(
+    new THREE.BoxGeometry(W, dirtH, TILE),
+    mat(dirtCol)
+  );
+  const dirtTopY = kind === 'grass' ? (topY - baseHeight - 0.06)
+                                    : (topY - baseHeight);
+  dirt.position.set(0, dirtTopY - dirtH/2, wZ(gz));
+  dirt.receiveShadow = true;
+  lane.group.add(dirt);
 
   // Per-kind detail layer
   if (kind === 'grass') decorateGrass(lane);
@@ -260,18 +276,19 @@ function decorateGrass(lane){
     lane.mobs.push({ kind:'block', gx:-gx, w:0.9 });
     used.add(-gx);
   }
-  // Inner scatter
-  const propCount = Math.floor(Math.random() * 4);
+  // Inner scatter — mostly flora (it's a city park feel between roads),
+  // with the metal NYC street objects as accent props.
+  const propCount = 1 + Math.floor(Math.random() * 3);   // 1-3
   for (let i = 0; i < propCount; i++){
     const gx = (Math.random()*2-1) * (HALF_WIDTH-1) | 0;
     if (gx === 0 || used.has(gx)) continue;
     used.add(gx);
     const r = Math.random();
     let prop;
-    if (r < 0.35) prop = makeHydrant();
-    else if (r < 0.65) prop = makeMailbox();
-    else if (r < 0.85) prop = makeNewsRack();
-    else prop = makeTree();
+    if (r < 0.62)      prop = makeTree();        // 62% flora
+    else if (r < 0.80) prop = makeHydrant();     // 18%
+    else if (r < 0.92) prop = makeMailbox();     // 12%
+    else               prop = makeNewsRack();    //  8%
     prop.position.set(wX(gx), 0, wZ(lane.gz));
     lane.group.add(prop);
     lane.mobs.push({ kind:'block', gx, w:0.8 });
@@ -354,19 +371,110 @@ function decorateRail(lane){
 }
 
 // ── Decor builders (NYC street props) ────────────────────────────────────────
+// Wrapper: each tile picks one of a few flora variants for visual variety.
 function makeTree(){
+  const r = Math.random();
+  if (r < 0.42) return makeMaple();
+  if (r < 0.66) return makePine();
+  if (r < 0.85) return makeBush();
+  return makePlanter();
+}
+function makeMaple(){
   const g = new THREE.Group();
   // trunk
-  g.add(box(0.32, 0.7, 0.32, P.bark, 0, 0.35, 0));
-  // leaves: three stacked faceted balls
-  const leafMat = new THREE.MeshStandardMaterial({ color: 0x3a8a32, roughness: 0.9, flatShading: true });
+  g.add(box(0.34, 0.65, 0.34, P.bark, 0, 0.32, 0));
+  const palette = [0x3a8a32, 0x4ea03e, 0x6b9a3e, 0x55903a];
+  const leafCol = palette[Math.floor(Math.random()*palette.length)];
+  const leafMat = new THREE.MeshStandardMaterial({ color: leafCol, roughness: 0.95, flatShading: true });
   const ic = new THREE.IcosahedronGeometry(0.55, 0);
-  for (const yy of [0.95, 1.35, 1.65]){
+  // 5-ball cluster — wider canopy, irregular silhouette
+  const clumps = [
+    [ 0.00, 1.05,  0.00, 1.10],
+    [-0.42, 1.00,  0.10, 0.85],
+    [ 0.38, 0.96, -0.18, 0.85],
+    [ 0.18, 1.34,  0.30, 0.95],
+    [-0.10, 1.44, -0.10, 0.95],
+  ];
+  for (const [x, y, z, s] of clumps){
     const m = new THREE.Mesh(ic, leafMat);
-    m.position.y = yy;
+    m.position.set(x, y, z);
+    m.scale.setScalar(s);
     g.add(m);
   }
-  g.add(makeShadow(0.6));
+  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+function makePine(){
+  const g = new THREE.Group();
+  g.add(box(0.26, 0.45, 0.26, 0x5e3d24, 0, 0.22, 0));
+  const pineMat = new THREE.MeshStandardMaterial({ color: 0x2e6d3a, roughness: 0.95, flatShading: true });
+  // three tapered cone tiers
+  const tiers = [[0.62, 0.68, 0.60], [0.50, 0.60, 1.08], [0.34, 0.50, 1.52]];
+  for (const [r, h, y] of tiers){
+    const c = new THREE.Mesh(new THREE.ConeGeometry(r, h, 6), pineMat);
+    c.position.y = y;
+    g.add(c);
+  }
+  // tiny star top (rare gold cap)
+  if (Math.random() < 0.15){
+    g.add(box(0.06, 0.10, 0.06, 0xf2c14e, 0, 1.82, 0));
+  }
+  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+function makeBush(){
+  const g = new THREE.Group();
+  const palette = [0x4a8d3f, 0x5a9c4a, 0x4a8a55];
+  const bushMat = new THREE.MeshStandardMaterial({ color: palette[Math.floor(Math.random()*palette.length)], roughness: 0.95, flatShading: true });
+  const ic = new THREE.IcosahedronGeometry(0.36, 0);
+  const positions = [
+    [ 0.00, 0.30,  0.00, 1.00],
+    [-0.22, 0.28,  0.18, 0.80],
+    [ 0.20, 0.26, -0.16, 0.80],
+    [ 0.04, 0.44, -0.06, 0.75],
+  ];
+  for (const [x, y, z, s] of positions){
+    const m = new THREE.Mesh(ic, bushMat);
+    m.position.set(x, y, z);
+    m.scale.setScalar(s);
+    g.add(m);
+  }
+  // 50% chance of flower / berry sprinkle
+  if (Math.random() < 0.55){
+    const flowerHex = [0xe04060, 0xffd644, 0xff7e3a, 0xf2f0e6][Math.floor(Math.random()*4)];
+    const fMat = new THREE.MeshStandardMaterial({ color: flowerHex, roughness: 0.7, flatShading: true });
+    const sphere = new THREE.SphereGeometry(0.07, 4, 4);
+    for (let i = 0; i < 5; i++){
+      const f = new THREE.Mesh(sphere, fMat);
+      f.position.set((Math.random()-0.5)*0.55, 0.40 + Math.random()*0.18, (Math.random()-0.5)*0.55);
+      g.add(f);
+    }
+  }
+  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+  return g;
+}
+function makePlanter(){
+  // Concrete sidewalk planter w/ little stems
+  const g = new THREE.Group();
+  g.add(box(0.80, 0.32, 0.80, 0xb0a89a, 0, 0.16, 0));
+  g.add(box(0.84, 0.06, 0.84, 0x8a8276, 0, 0.32, 0));         // rim
+  g.add(box(0.72, 0.04, 0.72, 0x4a3119, 0, 0.34, 0));         // dirt fill
+  // a few stems with little flower heads
+  const stemMat = new THREE.MeshStandardMaterial({ color: 0x3a8a32, roughness: 0.95, flatShading: true });
+  const flowerPalette = [0xe04060, 0xffd644, 0xff7e3a, 0xf2f0e6, 0xb05de8];
+  const sphere = new THREE.SphereGeometry(0.07, 4, 4);
+  for (let i = 0; i < 6; i++){
+    const x = (Math.random() - 0.5) * 0.5;
+    const z = (Math.random() - 0.5) * 0.5;
+    const h = 0.20 + Math.random() * 0.18;
+    const stem = box(0.05, h, 0.05, 0x3a8a32, x, 0.36 + h/2, z);
+    g.add(stem);
+    const fMat = new THREE.MeshStandardMaterial({ color: flowerPalette[Math.floor(Math.random()*flowerPalette.length)], roughness: 0.7, flatShading: true });
+    const f = new THREE.Mesh(sphere, fMat);
+    f.position.set(x, 0.36 + h + 0.05, z);
+    g.add(f);
+  }
+  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
   return g;
 }
 function makeHydrant(){
@@ -381,7 +489,7 @@ function makeHydrant(){
   g.add(noz);
   // top cap
   g.add(box(0.18, 0.10, 0.18, 0xb6342a, 0, 0.6, 0));
-  g.add(makeShadow(0.42));
+  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
   return g;
 }
 function makeMailbox(){
@@ -389,18 +497,27 @@ function makeMailbox(){
   g.add(box(0.55, 0.55, 0.42, 0x3266a8, 0, 0.4, 0));
   g.add(box(0.55, 0.10, 0.42, 0x244b80, 0, 0.7, 0));
   g.add(box(0.1, 0.15, 0.1, P.ironD, 0, 0.13, 0));
-  g.add(makeShadow(0.45));
+  // little white usps stripe
+  g.add(box(0.04, 0.10, 0.42, 0xfff7e6, 0.275, 0.34, 0));
+  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
   return g;
 }
 function makeNewsRack(){
   const g = new THREE.Group();
   g.add(box(0.6, 0.85, 0.45, P.ironD, 0, 0.45, 0));
-  g.add(box(0.5, 0.22, 0.04, 0xf2c14e, 0, 0.7, 0.23));
-  g.add(makeShadow(0.5));
+  g.add(box(0.5, 0.22, 0.04, 0xf2c14e, 0, 0.7, 0.23));   // sticker
+  g.add(box(0.5, 0.04, 0.46, 0xf2c14e, 0, 0.85, 0));      // top
+  // 4 small legs
+  for (const x of [-0.22, 0.22]){
+    for (const z of [-0.18, 0.18]){
+      g.add(box(0.04, 0.10, 0.04, 0x15110e, x, 0.05, z));
+    }
+  }
+  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
   return g;
 }
 function makeCoin(){
-  const m = new THREE.MeshStandardMaterial({ color: 0xf2c14e, roughness: 0.4, metalness: 0.7, emissive: 0x553300, emissiveIntensity: 0.2, flatShading: true });
+  const m = new THREE.MeshStandardMaterial({ color: 0xf2c14e, roughness: 0.4, metalness: 0.7, emissive: 0x553300, emissiveIntensity: 0.25, flatShading: true });
   const c = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.08, 12), m);
   c.rotation.x = Math.PI/2;
   c.castShadow = true;
@@ -409,66 +526,206 @@ function makeCoin(){
 }
 
 // ── Vehicle builders ─────────────────────────────────────────────────────────
+// Pattern: thin chassis + body lower + body upper cabin + roof; add windshield/
+// rear glass slabs, side windows, headlights/taillights/license/handles/mirrors.
+function _addWheels(g, list, tireR, tireT, hubColor){
+  const tireMat = mat(0x1a1612);
+  const hubMat  = mat(hubColor || 0xb5b0a8);
+  for (const [x, z] of list){
+    const tire = new THREE.Mesh(new THREE.CylinderGeometry(tireR, tireR, tireT, 12), tireMat);
+    tire.rotation.z = Math.PI/2; tire.position.set(x, tireR, z);
+    g.add(tire);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(tireR * 0.45, tireR * 0.45, tireT + 0.02, 8), hubMat);
+    hub.rotation.z = Math.PI/2; hub.position.set(x, tireR, z);
+    g.add(hub);
+  }
+}
 function makeTaxi(){
   const g = new THREE.Group();
-  // body
-  g.add(box(1.9, 0.46, 0.9, 0xffce2e, 0, 0.35, 0));
-  // roof
-  g.add(box(1.1, 0.40, 0.82, 0xffce2e, -0.05, 0.78, 0));
-  // hood + trunk slope (faked with smaller boxes)
-  g.add(box(0.4, 0.16, 0.84, darken(0xffce2e, 0.85), 0.85, 0.46, 0));
-  // windows (cream tinted)
-  g.add(box(1.0, 0.30, 0.88, 0x6cb8d1, -0.05, 0.78, 0).translateY(-0.02));
-  // black taxi stripe
-  g.add(box(2.0, 0.05, 0.92, 0x15110e, 0, 0.46, 0));
-  // checker band
-  for (let i = 0; i < 7; i++){
-    const c = (i % 2 === 0) ? 0x15110e : 0xffffff;
-    g.add(box(0.27, 0.05, 0.95, c, -0.9 + i * 0.30, 0.46, 0));
+  const yellow = 0xffce2e;
+  const yDark  = darken(yellow, 0.78);
+  const glass  = 0x9bcfe0;
+  // chassis
+  g.add(box(2.00, 0.16, 0.92, 0x2a221c, 0, 0.14, 0));
+  // body lower
+  g.add(box(1.92, 0.30, 0.88, yellow, 0, 0.37, 0));
+  // body shoulder
+  g.add(box(1.58, 0.18, 0.84, yellow, -0.08, 0.61, 0));
+  // cabin / roof
+  g.add(box(1.05, 0.28, 0.78, yellow, -0.10, 0.84, 0));
+  // windshield + rear glass (front faces of cabin)
+  g.add(box(0.04, 0.26, 0.76, glass, 0.43, 0.84, 0));
+  g.add(box(0.04, 0.26, 0.76, glass, -0.63, 0.84, 0));
+  // side windows
+  for (const z of [0.39, -0.39]){
+    g.add(box(0.92, 0.22, 0.04, glass, -0.10, 0.85, z));
+  }
+  // hood + trunk soft creases
+  g.add(box(0.46, 0.04, 0.84, yDark, 0.70, 0.53, 0));
+  g.add(box(0.40, 0.04, 0.84, yDark, -1.00 + 0.20, 0.53, 0));
+  // headlights (warm white)
+  for (const z of [0.30, -0.30]){
+    g.add(box(0.06, 0.10, 0.16, 0xfff4c8, 0.99, 0.42, z));
+  }
+  // grille strip
+  g.add(box(0.04, 0.10, 0.42, 0x2a221c, 1.00, 0.30, 0));
+  // taillights (red)
+  for (const z of [0.30, -0.30]){
+    g.add(box(0.06, 0.10, 0.16, 0xe04030, -0.99, 0.42, z));
+  }
+  // bumpers
+  g.add(box(0.06, 0.08, 0.82, 0x1a1612, 1.00, 0.26, 0));
+  g.add(box(0.06, 0.08, 0.82, 0x1a1612, -1.00, 0.26, 0));
+  // license plates
+  g.add(box(0.04, 0.08, 0.30, 0xf2efe2, 1.02, 0.30, 0));
+  g.add(box(0.04, 0.08, 0.30, 0xf2efe2, -1.02, 0.30, 0));
+  // checker band (between body lower and shoulder)
+  for (let i = 0; i < 9; i++){
+    const cc = (i % 2 === 0) ? 0x15110e : 0xffffff;
+    g.add(box(0.20, 0.07, 0.90, cc, -0.86 + i * 0.215, 0.225, 0));
+  }
+  // door handles
+  for (const z of [0.43, -0.43]){
+    g.add(box(0.20, 0.03, 0.02, 0x15110e, -0.10, 0.50, z));
+  }
+  // side mirrors
+  for (const z of [0.49, -0.49]){
+    g.add(box(0.10, 0.06, 0.10, yellow, 0.40, 0.68, z));
   }
   // wheels
-  for (const [x, z] of [[0.7,0.45],[0.7,-0.45],[-0.7,0.45],[-0.7,-0.45]]){
-    const w = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.20, 0.22, 10), mat(0x1a1612));
-    w.rotation.z = Math.PI/2; w.position.set(x, 0.20, z);
-    w.castShadow = true; g.add(w);
+  _addWheels(g, [[0.70, 0.45],[0.70,-0.45],[-0.70, 0.45],[-0.70,-0.45]], 0.21, 0.22, 0xd0c8b0);
+  // wheel wells (dark cutout)
+  for (const [x, z] of [[0.70, 0.46],[0.70,-0.46],[-0.70, 0.46],[-0.70,-0.46]]){
+    g.add(box(0.50, 0.18, 0.06, 0x1a1612, x, 0.21, z));
   }
-  // top sign
-  g.add(box(0.5, 0.16, 0.20, 0xfff7e6, -0.2, 1.05, 0));
-  g.add(box(0.42, 0.10, 0.04, 0x15110e, -0.2, 1.05, 0.10));
-  // long contact shadow under car
-  const sh = makeShadow(1.15); sh.scale.set(1.0, 0.65, 1.0); g.add(sh);
+  // TAXI roof sign (lit)
+  g.add(box(0.54, 0.18, 0.22, 0xfff7e6, -0.20, 1.07, 0));
+  // "TAXI" black faces (each side)
+  g.add(box(0.46, 0.10, 0.02, 0x15110e, -0.20, 1.08, 0.115));
+  g.add(box(0.46, 0.10, 0.02, 0x15110e, -0.20, 1.08, -0.115));
+  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
   return g;
 }
 function makeSedan(){
   const g = new THREE.Group();
-  const bodyCol = [0xe0483b, 0x36a3ec, 0x4fae44, 0xb05de8][Math.floor(Math.random()*4)];
-  g.add(box(1.7, 0.42, 0.84, bodyCol, 0, 0.33, 0));
-  g.add(box(0.95, 0.36, 0.78, darken(bodyCol, 0.7), -0.05, 0.72, 0));
-  // windows
-  g.add(box(0.85, 0.22, 0.82, 0x6cb8d1, -0.05, 0.72, 0));
-  // wheels
-  for (const [x, z] of [[0.55,0.42],[0.55,-0.42],[-0.55,0.42],[-0.55,-0.42]]){
-    const w = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.22, 10), mat(0x1a1612));
-    w.rotation.z = Math.PI/2; w.position.set(x, 0.18, z);
-    g.add(w);
+  const palette = [0xe0483b, 0x36a3ec, 0x4fae44, 0xb05de8, 0xe89534, 0x6b59c8, 0xf6f1e6];
+  const bodyCol = palette[Math.floor(Math.random()*palette.length)];
+  const bodyDark = darken(bodyCol, 0.72);
+  const glass = 0x9bcfe0;
+  // chassis
+  g.add(box(1.82, 0.14, 0.86, 0x2a221c, 0, 0.12, 0));
+  // body lower
+  g.add(box(1.74, 0.28, 0.84, bodyCol, 0, 0.33, 0));
+  // shoulder
+  g.add(box(1.40, 0.16, 0.80, bodyCol, -0.06, 0.55, 0));
+  // roof
+  g.add(box(0.95, 0.26, 0.72, bodyCol, -0.06, 0.74, 0));
+  // windshield + rear
+  g.add(box(0.04, 0.22, 0.72, glass, 0.43, 0.74, 0));
+  g.add(box(0.04, 0.22, 0.72, glass, -0.55, 0.74, 0));
+  // side windows
+  for (const z of [0.37, -0.37]){
+    g.add(box(0.85, 0.20, 0.04, glass, -0.06, 0.75, z));
   }
-  const sh = makeShadow(1.05); sh.scale.set(1.0, 0.62, 1.0); g.add(sh);
+  // hood crease
+  g.add(box(0.42, 0.04, 0.78, bodyDark, 0.60, 0.49, 0));
+  // headlights
+  for (const z of [0.28, -0.28]){
+    g.add(box(0.06, 0.08, 0.16, 0xfff4c8, 0.90, 0.38, z));
+  }
+  // grille
+  g.add(box(0.04, 0.08, 0.36, 0x1a1612, 0.91, 0.28, 0));
+  // taillights
+  for (const z of [0.28, -0.28]){
+    g.add(box(0.06, 0.08, 0.14, 0xe04030, -0.90, 0.38, z));
+  }
+  // bumpers
+  g.add(box(0.06, 0.08, 0.80, 0x1a1612, 0.92, 0.24, 0));
+  g.add(box(0.06, 0.08, 0.80, 0x1a1612, -0.92, 0.24, 0));
+  // license plate front + rear
+  g.add(box(0.04, 0.07, 0.26, 0xf2efe2, 0.94, 0.28, 0));
+  g.add(box(0.04, 0.07, 0.26, 0xf2efe2, -0.94, 0.28, 0));
+  // door handles
+  for (const z of [0.42, -0.42]){
+    g.add(box(0.18, 0.03, 0.02, 0x1a1612, -0.06, 0.46, z));
+  }
+  // side mirrors
+  for (const z of [0.46, -0.46]){
+    g.add(box(0.09, 0.06, 0.09, bodyCol, 0.36, 0.62, z));
+  }
+  // antenna (50%)
+  if (Math.random() < 0.5){
+    g.add(box(0.02, 0.20, 0.02, 0x1a1612, -0.45, 0.95, 0));
+  }
+  // wheels
+  _addWheels(g, [[0.55, 0.42],[0.55,-0.42],[-0.55, 0.42],[-0.55,-0.42]], 0.19, 0.22, 0xa8a09a);
+  for (const [x, z] of [[0.55, 0.43],[0.55,-0.43],[-0.55, 0.43],[-0.55,-0.43]]){
+    g.add(box(0.45, 0.18, 0.06, 0x1a1612, x, 0.19, z));
+  }
+  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
   return g;
 }
 function makeTruck(){
   const g = new THREE.Group();
-  // cab (white) + box (panel)
-  g.add(box(0.85, 0.7, 0.95, 0xf4f1e8, 0.95, 0.45, 0));
-  g.add(box(1.55, 1.05, 0.95, 0xdcd7c9, -0.35, 0.62, 0));
-  // window
-  g.add(box(0.55, 0.28, 1.0, 0x6cb8d1, 1.0, 0.7, 0));
-  // wheels
-  for (const [x, z] of [[0.95,0.5],[0.95,-0.5],[-0.85,0.5],[-0.85,-0.5]]){
-    const w = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.24, 10), mat(0x1a1612));
-    w.rotation.z = Math.PI/2; w.position.set(x, 0.22, z);
-    g.add(w);
+  const cabPalette = [0xf4f1e8, 0xb45642, 0x4e6d8f, 0x9c7e5a, 0xe4523c];
+  const cabCol = cabPalette[Math.floor(Math.random()*cabPalette.length)];
+  const cabDark = darken(cabCol, 0.80);
+  const glass = 0x9bcfe0;
+  // chassis
+  g.add(box(2.55, 0.16, 0.96, 0x1a1612, 0, 0.14, 0));
+  // cab body
+  g.add(box(0.92, 0.78, 0.92, cabCol, 0.80, 0.52, 0));
+  // cab nose (slightly forward + lower)
+  g.add(box(0.12, 0.55, 0.92, cabDark, 1.30, 0.42, 0));
+  // cab roof crease
+  g.add(box(0.92, 0.06, 0.92, cabDark, 0.80, 0.92, 0));
+  // cargo box
+  g.add(box(1.50, 1.20, 0.96, 0xd0c6b0, -0.45, 0.71, 0));
+  // cargo panel vertical seams
+  for (const x of [-1.00, -0.45, 0.10]){
+    g.add(box(0.02, 1.12, 0.98, 0x8e8470, x, 0.71, 0));
   }
-  const sh = makeShadow(1.35); sh.scale.set(1.0, 0.62, 1.0); g.add(sh);
+  // cargo top + bottom trim
+  g.add(box(1.54, 0.06, 0.98, 0x8e8470, -0.45, 1.34, 0));
+  g.add(box(1.54, 0.06, 0.98, 0x8e8470, -0.45, 0.14, 0));
+  // back doors
+  g.add(box(0.02, 1.00, 0.86, 0x9a8c70, -1.20, 0.65, 0));
+  g.add(box(0.04, 0.06, 0.04, 0x1a1612, -1.22, 0.65, 0));        // handle
+  // cab windshield
+  g.add(box(0.04, 0.30, 0.82, glass, 1.27, 0.68, 0));
+  // cab side windows
+  for (const z of [0.43, -0.43]){
+    g.add(box(0.62, 0.26, 0.04, glass, 0.85, 0.70, z));
+  }
+  // headlights + turn signal
+  for (const z of [0.34, -0.34]){
+    g.add(box(0.06, 0.10, 0.16, 0xfff4c8, 1.34, 0.32, z));
+    g.add(box(0.04, 0.06, 0.10, 0xf2a13a, 1.34, 0.18, z));
+  }
+  // grille
+  g.add(box(0.04, 0.18, 0.30, 0x1a1612, 1.35, 0.30, 0));
+  // taillights
+  for (const z of [0.36, -0.36]){
+    g.add(box(0.04, 0.16, 0.14, 0xe04030, -1.21, 0.42, z));
+  }
+  // cab handles
+  for (const z of [0.47, -0.47]){
+    g.add(box(0.10, 0.03, 0.02, 0x1a1612, 0.62, 0.50, z));
+  }
+  // big truck mirrors
+  for (const z of [0.50, -0.50]){
+    g.add(box(0.04, 0.30, 0.16, 0x1a1612, 1.18, 0.66, z));
+    g.add(box(0.06, 0.20, 0.14, 0xb5b0a8, 1.18, 0.68, z));
+  }
+  // exhaust pipe (chrome stack behind cab)
+  g.add(box(0.09, 0.70, 0.09, 0xc8c2b0, 0.36, 0.88, 0.40));
+  g.add(box(0.12, 0.06, 0.12, 0x1a1612, 0.36, 1.24, 0.40));  // tip cap
+  // bumpers
+  g.add(box(0.06, 0.10, 0.96, 0x1a1612, 1.36, 0.20, 0));
+  g.add(box(0.06, 0.10, 0.96, 0x1a1612, -1.22, 0.20, 0));
+  // wheels (6: front 2 + dual rear 4)
+  _addWheels(g, [[0.95, 0.5],[0.95,-0.5],[-0.40, 0.5],[-0.40,-0.5],[-1.00, 0.5],[-1.00,-0.5]], 0.22, 0.22, 0x8a857f);
+  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
   return g;
 }
 function pickCar(){
@@ -480,45 +737,69 @@ function pickCar(){
 
 function makeLog(){
   const g = new THREE.Group();
-  // 3-tile-long log (~2.8 wide on x)
+  // 3-tile-long log (~2.6 wide on x)
   const mLog = new THREE.MeshStandardMaterial({ color: 0x7c5230, roughness: 0.95, flatShading: true });
-  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.30, 2.6, 8), mLog);
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 2.6, 10), mLog);
   trunk.rotation.z = Math.PI/2;
-  trunk.position.y = 0.18;
+  trunk.position.y = 0.04;     // sits about flush with river top (~-0.08)
   g.add(trunk);
-  // end caps darker
-  for (const x of [-1.3, 1.3]){
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.31, 0.04, 8), mat(0x5e3d24));
-    cap.rotation.z = Math.PI/2;
-    cap.position.set(x, 0.18, 0);
-    g.add(cap);
+  // end caps with concentric rings (lighter inner)
+  for (const x of [-1.30, 1.30]){
+    const outer = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.04, 10), mat(0x5e3d24));
+    outer.rotation.z = Math.PI/2; outer.position.set(x, 0.04, 0); g.add(outer);
+    const inner = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.20, 0.05, 10), mat(0xa37752));
+    inner.rotation.z = Math.PI/2; inner.position.set(x, 0.04, 0); g.add(inner);
   }
-  // log floats on river; soft contact shadow on the water tile
-  const sh = makeShadow(1.5);
-  sh.scale.set(1.0, 0.4, 1.0);
-  sh.position.y = -0.07;       // river surface sits ~0.08 below grass
-  sh.material.opacity = 0.5;
-  g.add(sh);
+  // a couple of small bark knots on top
+  for (let i = 0; i < 2; i++){
+    const kx = (Math.random() - 0.5) * 1.8;
+    const k = box(0.10, 0.04, 0.10, 0x5e3d24, kx, 0.36, (Math.random() - 0.5) * 0.18);
+    g.add(k);
+  }
+  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
   return g;
 }
 
 function makeTrainCar(){
   const g = new THREE.Group();
+  // chassis
+  g.add(box(3.60, 0.12, 0.90, 0x1f1d22, 0, 0.10, 0));
   // body
-  g.add(box(3.6, 0.85, 0.85, 0x8b8f98, 0, 0.6, 0));
-  // red stripe
-  g.add(box(3.6, 0.10, 0.86, 0xe0483b, 0, 0.32, 0));
-  // windows
-  for (let i = -1; i <= 1; i++){
-    g.add(box(0.6, 0.22, 0.88, 0x6cb8d1, i * 1.0, 0.78, 0));
+  g.add(box(3.60, 0.78, 0.88, 0x8b8f98, 0, 0.55, 0));
+  // roof curve fake (slightly narrower upper)
+  g.add(box(3.40, 0.10, 0.92, 0x6f747e, 0, 0.99, 0));
+  // red MTA stripe with white edges
+  g.add(box(3.60, 0.04, 0.92, 0xfff7e6, 0, 0.34, 0));
+  g.add(box(3.60, 0.10, 0.92, 0xe0483b, 0, 0.29, 0));
+  g.add(box(3.60, 0.04, 0.92, 0xfff7e6, 0, 0.24, 0));
+  // windows (long band on both sides)
+  for (const z of [0.45, -0.45]){
+    for (let i = -1; i <= 1; i++){
+      g.add(box(0.62, 0.26, 0.04, 0x6cb8d1, i * 1.05, 0.74, z));
+    }
   }
-  // wheels
-  for (const x of [-1.2, 1.2]){
-    const w = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.20, 0.22, 10), mat(0x1a1612));
-    w.rotation.z = Math.PI/2; w.position.set(x, 0.20, 0);
-    g.add(w);
+  // door panels between windows
+  for (const z of [0.45, -0.45]){
+    for (const x of [-0.50, 0.50]){
+      g.add(box(0.04, 0.40, 0.04, 0x1a1612, x, 0.60, z));
+    }
   }
-  const sh = makeShadow(2.1); sh.scale.set(1.0, 0.6, 1.0); g.add(sh);
+  // headlight (front-only, but car symmetric — give both ends a light)
+  for (const x of [1.78, -1.78]){
+    g.add(box(0.04, 0.10, 0.18, 0xfff4c8, x, 0.55, 0));
+  }
+  // route letter circle (F line)
+  for (const x of [1.50, -1.50]){
+    const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.02, 12), mat(0xf2c14e));
+    ring.rotation.x = Math.PI / 2; ring.position.set(x, 0.68, 0.46);
+    g.add(ring);
+  }
+  // bumpers / couplers
+  g.add(box(0.04, 0.18, 0.40, 0x1a1612, 1.82, 0.30, 0));
+  g.add(box(0.04, 0.18, 0.40, 0x1a1612, -1.82, 0.30, 0));
+  // wheels (4 in two trucks)
+  _addWheels(g, [[-1.20, 0.42],[-1.20,-0.42],[1.20, 0.42],[1.20,-0.42]], 0.20, 0.22, 0x6a6660);
+  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
   return g;
 }
 
@@ -626,9 +907,18 @@ function updateLaneObstacles(lane, dt){
 
 // ── Input ────────────────────────────────────────────────────────────────────
 function attachInput(){
+  // Touch input: tap *position* directly picks a direction, no swipe needed.
+  // Player's screen position is roughly canvas-center, so:
+  //   tap upper area  → forward
+  //   tap lower area  → back
+  //   tap left/right  → step that way
+  //   tap near center → default forward
+  // Swipe is still honored as a fallback for users who reflexively swipe.
   let downX = 0, downY = 0, downT = 0;
   let skipNextUp = false;
-  const SWIPE = 22;
+  const SWIPE = 30;
+  const DEAD_R = 36;        // any tap within DEAD_R of center → forward
+  const SIDE_RATIO = 1.15;
   const onDown = (e) => {
     if (player.dead) { restart(); skipNextUp = true; return; }
     downX = e.clientX; downY = e.clientY; downT = performance.now();
@@ -637,14 +927,23 @@ function attachInput(){
     if (skipNextUp) { skipNextUp = false; return; }
     if (player.dead) return;
     const dx = e.clientX - downX, dy = e.clientY - downY;
-    if (Math.hypot(dx, dy) < SWIPE){
-      tryHop(0, 1);          // tap = forward
+    const moved = Math.hypot(dx, dy);
+    if (moved >= SWIPE){
+      // Real swipe: use direction
+      if (Math.abs(dx) > Math.abs(dy)) tryHop(dx > 0 ? 1 : -1, 0);
+      else tryHop(0, dy > 0 ? -1 : 1);
       return;
     }
-    if (Math.abs(dx) > Math.abs(dy)){
-      tryHop(dx > 0 ? 1 : -1, 0);
+    // Static tap: decide by where on the canvas they tapped, relative to its center.
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - (rect.left + rect.width / 2);
+    const cy = e.clientY - (rect.top  + rect.height / 2);
+    const ax = Math.abs(cx), ay = Math.abs(cy);
+    if (Math.hypot(cx, cy) < DEAD_R){ tryHop(0, 1); return; }
+    if (ax > ay * SIDE_RATIO){
+      tryHop(cx > 0 ? 1 : -1, 0);
     } else {
-      tryHop(0, dy > 0 ? -1 : 1);   // swipe down = backward, swipe up = forward
+      tryHop(0, cy < 0 ? 1 : -1);   // upper canvas = forward, lower = back
     }
   };
   canvas.addEventListener('pointerdown', onDown);
@@ -764,16 +1063,6 @@ function tick(){
     }
   }
 
-  // Sync independent contact shadow with player; shrink + fade while in air.
-  if (playerShadow){
-    playerShadow.position.x = playerMesh.position.x;
-    playerShadow.position.z = playerMesh.position.z;
-    const yh = Math.max(0, playerMesh.position.y);
-    const k = Math.max(0.55, 1 - yh * 0.75);
-    playerShadow.scale.setScalar(k);
-    playerShadow.material.opacity = Math.max(0.35, 1 - yh * 0.8);
-  }
-
   // Lane streaming
   if (player.gz + 10 > furthestAhead){
     for (let gz = furthestAhead + 1; gz <= player.gz + 14; gz++) addLane(gz);
@@ -783,13 +1072,17 @@ function tick(){
     furthestBehind++;
   }
 
-  // Camera follow
-  const targetCamZ = wZ(player.gz) + 8;
-  const targetCamX = player.worldX * 0.35 + 8;     // slight x parallax
+  // Camera follow — tiny yaw so +Z forward stays close to "screen up"
+  const targetCamZ = wZ(player.gz) + 11;
+  const targetCamX = player.worldX + 2;
   camera.position.x = lerp(camera.position.x, targetCamX, 6 * dt);
   camera.position.z = lerp(camera.position.z, targetCamZ, 6 * dt);
-  camera.position.y = 12;
-  camera.lookAt(player.worldX * 0.35, 0, wZ(player.gz) - 0.5);
+  camera.position.y = 14;
+  camera.lookAt(player.worldX, 0, wZ(player.gz) - 0.5);
+
+  // Move shadow camera with player so its frustum stays tight + crisp
+  sun.position.set(player.worldX + 8, 16, wZ(player.gz) + 6);
+  sunTarget.position.set(player.worldX, 0, wZ(player.gz));
 
   renderer.render(scene, camera);
 }
