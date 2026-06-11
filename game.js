@@ -12,7 +12,7 @@ const HALF_WIDTH   = 7;          // visible cells each side of x=0
 const KILL_X       = 8;          // |worldX| > this → off-screen kill
 const HOP_DUR      = 0.18;       // seconds
 const HOP_HEIGHT   = 0.55;
-const VIEW_H       = 7.5;        // ortho frustum half-height (smaller = zoomed in)
+const VIEW_H       = 6.4;        // ortho frustum half-height (smaller = zoomed in)
 const PLAYER_SCALE = 0.55;       // bumped from 0.42 so character reads on small screens
 const SURFACE_Y    = 0.20;       // y of road/grass/rail top surface — vehicles sit here
 
@@ -24,11 +24,11 @@ let sun, sunTarget, ambient, fill;
 let matHead, matTail;           // shared emissive vehicle-lamp materials (glow at night)
 let dayT = 0;                   // seconds into the day/night cycle
 const DAY_CYCLE = 80;           // seconds for one full day→night loop
-const SKY_DAY = new THREE.Color(0xaed0e6), SKY_NIGHT = new THREE.Color(0x0e1430);
+const SKY_DAY = new THREE.Color(0xaed0e6), SKY_NIGHT = new THREE.Color(0x1d3a78);
 const SKY_DAWN = new THREE.Color(0xf3a878), SKY_DUSK = new THREE.Color(0xe9714a);  // horizon glow
-const SUN_DAY = new THREE.Color(0xfff4d6), SUN_NIGHT = new THREE.Color(0x46568a);
+const SUN_DAY = new THREE.Color(0xfff4d6), SUN_NIGHT = new THREE.Color(0x5878d8);  // cool moonlight
 const SUN_DAWN = new THREE.Color(0xffc08a), SUN_DUSK = new THREE.Color(0xff8a3c);  // golden hour
-const AMB_DAY = new THREE.Color(0xfdfbf4), AMB_NIGHT = new THREE.Color(0x34425e), AMB_WARM = new THREE.Color(0xffc6a0);
+const AMB_DAY = new THREE.Color(0xfdfbf4), AMB_NIGHT = new THREE.Color(0x2a4a86), AMB_WARM = new THREE.Color(0xffc6a0);
 const _dnSky = new THREE.Color(), _dnSun = new THREE.Color(), _dnAmb = new THREE.Color();
 let lanesByGz = new Map();      // gz → laneRecord
 let furthestAhead = -Infinity;  // largest gz that has a lane
@@ -46,16 +46,31 @@ const player = {
   sinking: false,               // drown death animation
   hopDur: HOP_DUR,              // per-character (set in buildPlayer)
   hopHeight: HOP_HEIGHT,
+  rigBase: null,                // captured rest rotations of the limb pivots
+  step: 0,                      // alternates each hop so steps lead with opposite legs
+  grace: 0,                     // seconds of post-revive invulnerability
 };
 
-// Playable cast — civilians + NYC archetypes (monsters excluded to keep the
-// street theme coherent). One is picked at random each run.
-const CAST = [
+// Roster. Civilians are free starters; NYC archetypes + after-dark monsters are
+// coin-unlock collectibles. Only unlocked characters enter the random pool.
+const STARTERS = [
   'shopkeeper', 'granny', 'oldman', 'blonde', 'kid', 'businessman', 'officeWoman',
   'student', 'darkWoman', 'worker', 'teen', 'fitWoman', 'chef', 'bigGuy',
-  'cop', 'nurse', 'firefighter', 'construction', 'delivery', 'cowboy', 'punk',
-  'rapper', 'biker', 'goth',
 ];
+const ARCH_KEYS = ['cop', 'nurse', 'firefighter', 'construction', 'delivery', 'cowboy', 'punk', 'rapper', 'biker', 'goth'];
+const MONSTER_KEYS = ['vampire', 'werewolf', 'zombie', 'ghost', 'skeleton', 'mummy'];
+const ROSTER = [...STARTERS, ...ARCH_KEYS, ...MONSTER_KEYS];
+const UNLOCK_COST = 20;
+// English display names (platform faces US/English users — never ship Chinese here).
+const NAMES = {
+  shopkeeper:'Shopkeeper', granny:'Granny', oldman:'Old Timer', blonde:'Blondie', kid:'The Kid',
+  businessman:'The Suit', officeWoman:'Office Lady', student:'Student', darkWoman:'City Girl',
+  worker:'Clerk', teen:'Teen', fitWoman:'Gym Rat', chef:'Chef', bigGuy:'Big Guy',
+  cop:'Cop', nurse:'Nurse', firefighter:'Firefighter', construction:'Hard Hat', delivery:'Courier',
+  cowboy:'Cowboy', punk:'Punk', rapper:'Rapper', biker:'Biker', goth:'Goth',
+  vampire:'Vampire', werewolf:'Werewolf', zombie:'Zombie', ghost:'Ghost', skeleton:'Skeleton', mummy:'Mummy',
+};
+let unlocked = new Set(STARTERS);
 // Per-character movement feel: durMul scales hop time (lower = snappier),
 // heightMul scales hop arc. Anyone not listed uses the default 1.0/1.0.
 const MOVE = {
@@ -76,7 +91,15 @@ const MOVE = {
   firefighter:  { dur: 1.22, height: 0.9  },
   construction: { dur: 1.20, height: 0.9  },
 };
-function pickChar(){ return CAST[Math.floor(Math.random() * CAST.length)]; }
+function pickChar(){
+  const pool = ROSTER.filter(k => unlocked.has(k));
+  return pool[Math.floor(Math.random() * pool.length)] || 'shopkeeper';
+}
+
+// ── Coin economy: revive (escalating per-run cost) + character unlock ─────────
+const REVIVE_COSTS = [15, 30, 60];
+function reviveCost(){ return REVIVE_COSTS[Math.min(reviveCount, REVIVE_COSTS.length - 1)]; }
+let reviveCount = 0;
 
 let coins = 0;
 let bestDistance = 0;
@@ -332,6 +355,8 @@ export function startGame(opts){
     bestDistance = +localStorage.getItem('bh.bestDist') || 0;
     bestCoins    = +localStorage.getItem('bh.bestCoins') || 0;
     coins        = +localStorage.getItem('bh.coins') || 0;
+    const saved = JSON.parse(localStorage.getItem('bh.unlocked') || '[]');
+    if (Array.isArray(saved)) for (const k of saved) if (ROSTER.includes(k)) unlocked.add(k);
   } catch(e) {}
   hud.setCoin(coins);
 
@@ -339,7 +364,7 @@ export function startGame(opts){
   hud.setReady(true);
   requestAnimationFrame(tick);
 
-  return { restart };
+  return { restart, revive, reviveInfo, getCoins, getRoster, unlock: unlockChar, thumb: makeThumb };
 }
 
 function buildPlayer(charKey){
@@ -353,8 +378,30 @@ function buildPlayer(charKey){
   playerMesh.position.set(0, 0, 0);
   playerMesh.rotation.y = Math.PI;   // face +Z (forward in our world)
   playerRig = playerMesh.userData.rig || null;
+  player.rigBase = playerRig ? {
+    legL: playerRig.legL.rotation.x, legR: playerRig.legR.rotation.x,
+    armL: playerRig.armL.rotation.x, armR: playerRig.armR.rotation.x,
+  } : null;
   playerMesh.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
   scene.add(playerMesh);
+}
+
+// Pose the limb pivots for a hop. `sw` 0→1→0 over the hop; `dir` ±1 alternates
+// which leg leads. Rotations are added on top of each rig's rest pose so held
+// props (cop's donut, etc.) keep their offset.
+function poseLimbs(sw, dir){
+  if (!playerRig || !player.rigBase) return;
+  const b = player.rigBase;
+  playerRig.legL.rotation.x = b.legL + sw * (0.75 + 0.30 * dir);
+  playerRig.legR.rotation.x = b.legR + sw * (0.75 - 0.30 * dir);
+  playerRig.armL.rotation.x = b.armL - sw * (0.55 - 0.25 * dir);
+  playerRig.armR.rotation.x = b.armR - sw * (0.55 + 0.25 * dir);
+}
+function restLimbs(){
+  if (!playerRig || !player.rigBase) return;
+  const b = player.rigBase;
+  playerRig.legL.rotation.x = b.legL; playerRig.legR.rotation.x = b.legR;
+  playerRig.armL.rotation.x = b.armL; playerRig.armR.rotation.x = b.armR;
 }
 
 function onResize(){
@@ -1152,6 +1199,7 @@ function tryHop(dx, dz){
   }
 
   // Begin hop
+  player.step ^= 1;            // alternate which leg leads
   player.hopping = true;
   player.hopT = 0;
   player.hopFromX = wX(player.gx); player.hopFromZ = wZ(player.gz);
@@ -1180,6 +1228,8 @@ function tick(){
   requestAnimationFrame(tick);
   const dt = Math.min(0.05, clock.getDelta());
 
+  if (player.grace > 0) player.grace = Math.max(0, player.grace - dt);
+
   // Update player hop animation
   if (player.hopping){
     player.hopT += dt;
@@ -1192,11 +1242,14 @@ function tick(){
     playerMesh.position.set(x, y, z);
     // slight squash anim
     playerMesh.scale.y = PLAYER_SCALE * (1 - 0.18 * Math.sin(Math.PI * t));
+    // arms + legs swing through the leap
+    poseLimbs(Math.sin(Math.PI * t), player.step ? 1 : -1);
     // smooth turn toward facing
     playerMesh.rotation.y = lerpAngle(playerMesh.rotation.y, player.facing, 12 * dt);
     if (t >= 1){
       player.hopping = false;
       playerMesh.scale.y = PLAYER_SCALE;
+      restLimbs();
       onLand();
     }
   } else if (player.bump){
@@ -1211,11 +1264,13 @@ function tick(){
       wZ(player.gz) + (-player.bump.dz) * lean * 0.35
     );
     playerMesh.scale.y = PLAYER_SCALE * (1 - 0.12 * arc);
+    poseLimbs(arc * 0.6, 1);   // small shuffle so a blocked tap still animates
     playerMesh.rotation.y = lerpAngle(playerMesh.rotation.y, player.facing, 16 * dt);
     if (bt >= 1){
       player.bump = null;
       playerMesh.scale.y = PLAYER_SCALE;
       playerMesh.position.set(player.worldX, 0, wZ(player.gz));
+      restLimbs();
     }
   }
 
@@ -1240,7 +1295,7 @@ function tick(){
     player.worldX = r.log.x + r.offsetX;
     playerMesh.position.x = player.worldX;
     // dead if carried off the playable strip
-    if (Math.abs(player.worldX) > KILL_X){ die('drift'); }
+    if (Math.abs(player.worldX) > KILL_X && player.grace <= 0){ die('drift'); }
   }
 
   // Collision check while NOT hopping (player on a tile)
@@ -1305,10 +1360,10 @@ function updateDayNight(dt){
   const horizon = Math.max(0, 1 - Math.abs(sunHeight) / 0.5);
   const rising  = Math.cos(ph * Math.PI * 2) > 0;   // sunrise side vs sunset side
 
-  // Light levels
-  sun.intensity     = 0.12 + 1.00 * day;
-  ambient.intensity = 0.16 + 0.42 * day;
-  fill.intensity    = 0.08 + 0.22 * day;
+  // Light levels — night keeps a generous floor so it stays readable (just blue, not dark)
+  sun.intensity     = 0.42 + 0.70 * day;
+  ambient.intensity = 0.40 + 0.30 * day;
+  fill.intensity    = 0.20 + 0.16 * day;
 
   // Sky + fog: night→day base, then push toward warm horizon colour at dawn/dusk
   _dnSky.copy(SKY_NIGHT).lerp(SKY_DAY, day);
@@ -1349,15 +1404,16 @@ function onLand(){
     });
   }
 
+  const inv = player.grace > 0;   // freshly revived → no lethal landings for a beat
   if (lane.kind === 'river'){
     // Must land on a log
     const log = nearestLog(lane, player.worldX);
     if (log && Math.abs(player.worldX - log.x) < log.width / 2 - 0.1){
       player.riding = { log, offsetX: player.worldX - log.x };
-    } else {
+    } else if (!inv){
       die('drown');
     }
-  } else if (lane.kind === 'rail'){
+  } else if (lane.kind === 'rail' && !inv){
     // Check if a train is currently overlapping us
     for (const m of lane.mobs){
       if (m.kind === 'train'){
@@ -1366,7 +1422,7 @@ function onLand(){
         }
       }
     }
-  } else if (lane.kind === 'road'){
+  } else if (lane.kind === 'road' && !inv){
     // car overlap check at land time (the per-frame checkLaneHazards handles ongoing)
     for (const m of lane.mobs){
       if (m.kind === 'car' && Math.abs(player.worldX - m.x) < m.width/2 + 0.2){ die('car'); return; }
@@ -1375,6 +1431,7 @@ function onLand(){
 }
 
 function checkLaneHazards(){
+  if (player.grace > 0) return;
   const lane = lanesByGz.get(player.gz);
   if (!lane) return;
   if (lane.kind === 'road'){
@@ -1461,6 +1518,7 @@ function restart(){
   player.hopping = false; player.dead = false; player.riding = null;
   player.facing = Math.PI;
   player.bump = null; player.sinking = false;
+  player.grace = 0; reviveCount = 0;
   deathToken++;   // cancel any pending death-menu timeout
   fxClear();
   buildPlayer(pickChar());   // fresh random character each run
@@ -1471,6 +1529,110 @@ function restart(){
   runDistance = 0;
   hud.setDistance(0);
   hud.setDead(null);
+}
+
+// ── Coin revive ──────────────────────────────────────────────────────────────
+function reviveInfo(){
+  const cost = reviveCost();
+  return { cost, coins, canAfford: coins >= cost };
+}
+
+// Nearest non-river lane at or behind the player — a safe place to drop back in.
+function safeReviveGz(){
+  for (let gz = player.gz; gz >= furthestBehind; gz--){
+    const lane = lanesByGz.get(gz);
+    if (lane && lane.kind !== 'river') return gz;
+  }
+  for (let gz = player.gz; gz <= furthestAhead; gz++){
+    const lane = lanesByGz.get(gz);
+    if (lane && lane.kind !== 'river') return gz;
+  }
+  return player.gz;
+}
+
+function revive(){
+  if (!player.dead) return false;
+  const cost = reviveCost();
+  if (coins < cost) return false;
+  coins -= cost;
+  reviveCount++;
+  try { localStorage.setItem('bh.coins', String(coins)); } catch(e){}
+  hud.setCoin(coins);
+
+  deathToken++;                 // cancel any pending death-menu timeout
+  player.dead = false;
+  player.sinking = false;
+  player.riding = null;
+  player.hopping = false;
+  player.bump = null;
+  player.grace = 1.8;           // brief invulnerability so cars/trains can't re-kill instantly
+
+  player.gz = safeReviveGz();
+  player.gx = Math.max(-HALF_WIDTH, Math.min(HALF_WIDTH, player.gx));
+  player.worldX = wX(player.gx);
+  player.facing = Math.PI;
+
+  playerMesh.rotation.set(0, Math.PI, 0);
+  playerMesh.scale.set(PLAYER_SCALE, PLAYER_SCALE, PLAYER_SCALE);
+  playerMesh.position.set(player.worldX, 0, wZ(player.gz));
+  restLimbs();
+
+  burst(player.worldX, 0.5, wZ(player.gz), { count: 16, color: [0x3fb6ac, 0xffffff, 0xffce2e], speed: 2.6, up: 3.2, size: 0.14, life: 0.6 });
+  SFX.coin();
+  return true;
+}
+
+// ── Character unlock roster ──────────────────────────────────────────────────
+function getCoins(){ return coins; }
+function getRoster(){
+  return ROSTER.map(key => ({ key, name: NAMES[key] || key, unlocked: unlocked.has(key) }));
+}
+function unlockChar(key){
+  if (unlocked.has(key) || !ROSTER.includes(key) || coins < UNLOCK_COST) return false;
+  coins -= UNLOCK_COST;
+  unlocked.add(key);
+  try {
+    localStorage.setItem('bh.coins', String(coins));
+    localStorage.setItem('bh.unlocked', JSON.stringify([...unlocked]));
+  } catch(e){}
+  hud.setCoin(coins);
+  SFX.coin();
+  return true;
+}
+
+// Offscreen renderer that bakes a transparent PNG thumbnail of any character.
+let thumbRenderer = null, thumbScene = null, thumbCam = null;
+function makeThumb(key){
+  if (!thumbRenderer){
+    thumbRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    thumbRenderer.setSize(150, 150);
+    thumbRenderer.setClearColor(0x000000, 0);
+    thumbScene = new THREE.Scene();
+    thumbScene.add(new THREE.AmbientLight(0xffffff, 0.9));
+    const d = new THREE.DirectionalLight(0xffffff, 0.95); d.position.set(3, 6, 5); thumbScene.add(d);
+    const d2 = new THREE.DirectionalLight(0xcfe4ff, 0.45); d2.position.set(-4, 3, 2); thumbScene.add(d2);
+    thumbCam = new THREE.PerspectiveCamera(30, 1, 0.1, 100);
+  }
+  const mesh = (CHARACTERS[key] || CHARACTERS.shopkeeper)();
+  thumbScene.add(mesh);
+  const box = new THREE.Box3().setFromObject(mesh);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const dist = (maxDim / (2 * Math.tan(THREE.MathUtils.degToRad(30) / 2))) * 1.35;
+  thumbCam.position.set(center.x + dist * 0.45, center.y + dist * 0.30, center.z + dist);
+  thumbCam.lookAt(center);
+  thumbRenderer.render(thumbScene, thumbCam);
+  const url = thumbRenderer.domElement.toDataURL('image/png');
+  thumbScene.remove(mesh);
+  mesh.traverse(o => {
+    if (!o.isMesh) return;
+    o.geometry && o.geometry.dispose && o.geometry.dispose();
+    const m = o.material;
+    if (Array.isArray(m)) m.forEach(x => x && x.dispose && x.dispose());
+    else if (m && m.dispose) m.dispose();
+  });
+  return url;
 }
 
 // ── Leaderboard wiring ───────────────────────────────────────────────────────

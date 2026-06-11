@@ -121,6 +121,93 @@
     -webkit-tap-highlight-color:transparent;
   }
   #over button:active { transform:translate(2px, 2px); box-shadow:2px 2px 0 var(--ink); }
+
+  /* Revive — premium teal action above "Hop again" */
+  #over #revive {
+    background:var(--teal); color:#fff; font-size:24px;
+    -webkit-text-stroke:1px var(--ink); paint-order:stroke fill;
+    display:none;
+  }
+  #over #revive.show { display:inline-block; }
+  #over #revive.broke { background:#cfc8bc; color:#8a8175; cursor:default; }
+  #over #revive .px { font-size:16px; opacity:.92; }
+
+  /* Roster open button — top-right pill */
+  #rosterBtn {
+    position:fixed; top:18px; right:14px; z-index:6; pointer-events:auto;
+    padding:6px 14px; border-radius:999px;
+    background:var(--paper); border:3px solid var(--ink);
+    box-shadow:3px 3px 0 var(--ink);
+    font-family:var(--comic); font-size:18px; color:var(--ink);
+    letter-spacing:.04em; cursor:pointer; -webkit-tap-highlight-color:transparent;
+  }
+  #rosterBtn:active { transform:translate(2px,2px); box-shadow:1px 1px 0 var(--ink); }
+  #rosterBtn.hidden { display:none; }
+
+  /* Roster link on the death card */
+  #over #rosterCard {
+    background:none; box-shadow:none; border:none; color:#8a7d72;
+    font-size:18px; margin-top:6px; padding:4px;
+    text-decoration:underline; text-underline-offset:3px;
+  }
+  #over #rosterCard:active { transform:none; }
+
+  /* Roster overlay */
+  #roster {
+    position:fixed; inset:0; display:none; z-index:40; padding:20px;
+    align-items:center; justify-content:center;
+    background:rgba(21,17,14,.6); pointer-events:auto;
+  }
+  #roster.show { display:flex; }
+  #roster .rcard {
+    background:var(--paper); border:4px solid var(--ink); box-shadow:6px 6px 0 var(--ink);
+    border-radius:10px; width:100%; max-width:380px; max-height:84vh;
+    display:flex; flex-direction:column; padding:18px 16px 14px;
+  }
+  #roster h2 {
+    font-family:var(--pow); font-size:30px; color:var(--ink); margin:0 0 2px;
+    text-align:center; letter-spacing:.02em;
+  }
+  #roster .rcoins {
+    display:flex; align-items:center; justify-content:center; gap:6px; margin-bottom:10px;
+    font-family:var(--comic); font-size:20px; color:var(--ink);
+  }
+  #roster .rcoins .c {
+    width:22px; height:22px; border-radius:50%; background:var(--yellow);
+    border:2px solid var(--ink); display:flex; align-items:center; justify-content:center;
+    font-family:var(--comic); font-size:13px;
+  }
+  #rgrid {
+    display:grid; grid-template-columns:repeat(3,1fr); gap:8px;
+    overflow-y:auto; -webkit-overflow-scrolling:touch; padding:2px;
+  }
+  .ritem {
+    border:2.5px solid var(--ink); border-radius:8px; background:#fffdf6;
+    padding:6px 4px 7px; text-align:center; cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .ritem.locked { background:#efe7d6; }
+  .ritem.locked .rthumb { filter:grayscale(.85) brightness(.9); opacity:.7; }
+  .ritem img.rthumb { width:100%; aspect-ratio:1/1; display:block; image-rendering:auto; }
+  .ritem .rname {
+    font-family:var(--comic); font-size:13px; color:var(--ink);
+    line-height:1.05; margin-top:2px; letter-spacing:.02em;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .ritem .rtag {
+    margin-top:3px; font-family:var(--comic); font-size:12px; line-height:1;
+    display:inline-block; padding:2px 8px; border-radius:999px; letter-spacing:.04em;
+  }
+  .ritem .rtag.own  { color:var(--teal); }
+  .ritem .rtag.buy  { background:var(--yellow); border:2px solid var(--ink); color:var(--ink); }
+  .ritem .rtag.cant { background:#ded6c7; border:2px solid #b3a994; color:#8a8175; }
+  #rClose {
+    margin-top:12px; align-self:center; padding:8px 24px; border:3px solid var(--ink);
+    background:var(--yellow); color:var(--ink); font-family:var(--comic); font-size:20px;
+    border-radius:999px; box-shadow:3px 3px 0 var(--ink); cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+  }
+  #rClose:active { transform:translate(2px,2px); box-shadow:1px 1px 0 var(--ink); }
 </style>
 </head>
 <body>
@@ -130,6 +217,7 @@
   <div id="dist" class="hud"><span class="lbl">DISTANCE</span><span id="distN">0</span></div>
   <div id="coin" class="hud"><span class="c">$</span><span id="coinN">0</span></div>
   <div id="hint" class="hud">Tap to hop</div>
+  <button id="rosterBtn">CHARACTERS</button>
 </div>
 
 <div id="over">
@@ -139,7 +227,18 @@
     <div class="row"><span class="k">DISTANCE</span><span class="v" id="finalDist">0</span></div>
     <div class="row best"><span class="k">BEST</span><span class="v" id="finalBest">0</span></div>
     <div class="row"><span class="k">COINS</span><span class="v" id="finalCoins">0</span></div>
+    <button id="revive">Revive <span class="px">($<span id="reviveCost">0</span>)</span></button>
     <button id="again">Hop again</button>
+    <button id="rosterCard">Characters</button>
+  </div>
+</div>
+
+<div id="roster">
+  <div class="rcard">
+    <h2>CHARACTERS</h2>
+    <div class="rcoins"><span class="c">$</span><span id="rCoinN">0</span> coins</div>
+    <div id="rgrid"></div>
+    <button id="rClose">Close</button>
   </div>
 </div>
 
@@ -161,6 +260,9 @@ const overEl = $('#over');
 const wordmarkEl = $('#wordmark');
 const distBoxEl = $('#dist');
 const hintEl = $('#hint');
+const reviveBtn = $('#revive');
+const reviveCostEl = $('#reviveCost');
+const rosterBtnEl = $('#rosterBtn');
 
 const REASONS = {
   car:    'flattened by a yellow cab',
@@ -181,6 +283,7 @@ const hud = {
       wordmarkEl.classList.add('hidden');
       distBoxEl.classList.add('show');
       hintEl.classList.remove('show');
+      rosterBtnEl.classList.add('hidden');   // no mid-run browsing (game keeps running)
     }
   },
   setCoin(n){ coinEl.textContent = String(n); },
@@ -193,12 +296,18 @@ const hud = {
       distBoxEl.classList.remove('show');
       hintEl.classList.add('show');
       distEl.textContent = '0';
+      rosterBtnEl.classList.remove('hidden');
       return;
     }
     $('#reason').textContent = REASONS[payload.reason] || 'gone';
     $('#finalDist').textContent = String(payload.distance);
     $('#finalBest').textContent = String(payload.best);
     $('#finalCoins').textContent = String(payload.coins);
+    // Revive button: show cost, grey out if the player can't afford it.
+    const info = api.reviveInfo();
+    reviveBtn.classList.add('show');
+    reviveCostEl.textContent = String(info.cost);
+    reviveBtn.classList.toggle('broke', !info.canAfford);
     overEl.classList.add('show');
   },
   setReady(){
@@ -209,6 +318,57 @@ const hud = {
 const api = startGame({ canvas, hud });
 
 $('#again').addEventListener('click', () => api.restart());
+
+reviveBtn.addEventListener('click', () => {
+  if (reviveBtn.classList.contains('broke')) return;
+  if (api.revive()){
+    reviveBtn.classList.remove('show');
+    overEl.classList.remove('show');   // resume the run; keep HUD/title state intact
+  }
+});
+
+// ── Character roster overlay ──────────────────────────────────────────────────
+const rosterEl = $('#roster');
+const rgridEl = $('#rgrid');
+const rCoinEl = $('#rCoinN');
+const thumbCache = {};
+
+function thumbFor(key){
+  if (!thumbCache[key]) thumbCache[key] = api.thumb(key);
+  return thumbCache[key];
+}
+
+function renderRoster(){
+  rCoinEl.textContent = String(api.getCoins());
+  const list = api.getRoster();
+  const coins = api.getCoins();
+  rgridEl.innerHTML = '';
+  for (const item of list){
+    const cell = document.createElement('div');
+    cell.className = 'ritem' + (item.unlocked ? '' : ' locked');
+    const img = document.createElement('img');
+    img.className = 'rthumb'; img.alt = item.name; img.draggable = false;
+    img.src = thumbFor(item.key);
+    const name = document.createElement('div');
+    name.className = 'rname'; name.textContent = item.name;
+    const tag = document.createElement('span');
+    if (item.unlocked){
+      tag.className = 'rtag own'; tag.textContent = 'OWNED';
+    } else if (coins >= 20){
+      tag.className = 'rtag buy'; tag.textContent = '$20';
+      cell.addEventListener('click', () => { if (api.unlock(item.key)) renderRoster(); });
+    } else {
+      tag.className = 'rtag cant'; tag.textContent = '$20';
+    }
+    cell.appendChild(img); cell.appendChild(name); cell.appendChild(tag);
+    rgridEl.appendChild(cell);
+  }
+}
+
+function openRoster(){ renderRoster(); rosterEl.classList.add('show'); }
+$('#rosterBtn').addEventListener('click', openRoster);
+$('#rosterCard').addEventListener('click', openRoster);
+$('#rClose').addEventListener('click', () => rosterEl.classList.remove('show'));
 </script>
 </body>
 </html>
