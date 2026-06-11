@@ -1,6 +1,6 @@
 // game.js — Block Hop core. Three.js v0.160 ES module.
 // Grid-based 3D hop game. Iso-ish camera, NYC street theme, voxel cast from
-// shelf-it/builders/characters.js. tap=forward, swipe lr/back, camera chase line.
+// shelf-it/builders/characters.js. tap=forward, swipe lr/back. No chase line — die only by car/train/river/drift.
 
 import * as THREE from 'three';
 import { P, box, cyl, ball, cone, darken } from './lib/prims.js';
@@ -12,19 +12,16 @@ const HALF_WIDTH   = 7;          // visible cells each side of x=0
 const KILL_X       = 8;          // |worldX| > this → off-screen kill
 const HOP_DUR      = 0.18;       // seconds
 const HOP_HEIGHT   = 0.55;
-const CHASE_DELAY  = 3.5;        // grace before chase line moves
-const CHASE_SPEED  = 0.85;       // cells / sec the chase line advances
-const CHASE_GAP    = 7;          // player must be > chaseFloor + (-CHASE_GAP) ahead
+const VIEW_H       = 7.5;        // ortho frustum half-height (smaller = zoomed in)
+const PLAYER_SCALE = 0.55;       // bumped from 0.42 so character reads on small screens
 
 // ── Globals ───────────────────────────────────────────────────────────────────
 let scene, camera, renderer, canvas;
 let clock;
-let playerMesh, playerRig;
+let playerMesh, playerRig, playerShadow;
 let lanesByGz = new Map();      // gz → laneRecord
 let furthestAhead = -Infinity;  // largest gz that has a lane
 let furthestBehind = Infinity;  // smallest gz that has a lane
-let chaseFloor = 0;             // lowest gz still alive (advances forward)
-let chaseGrace = CHASE_DELAY;
 
 const player = {
   gx: 0, gz: 0,
@@ -58,9 +55,8 @@ export function startGame(opts){
 
   // Iso-ish orthographic camera, follows player on Z
   const aspect = canvas.clientWidth / canvas.clientHeight;
-  const viewH = 10;
   camera = new THREE.OrthographicCamera(
-    -viewH * aspect, viewH * aspect, viewH, -viewH, 0.1, 200
+    -VIEW_H * aspect, VIEW_H * aspect, VIEW_H, -VIEW_H, 0.1, 200
   );
   camera.position.set(10, 12, 12);
   camera.lookAt(0, 0, 0);
@@ -68,24 +64,14 @@ export function startGame(opts){
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // Real shadowMap is jagged on voxel cubes + costly; use baked contact shadows instead.
 
-  // Sky-ish ambient + sunny key + soft fill
-  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-  const sun = new THREE.DirectionalLight(0xffffff, 0.95);
+  // Sky-ish ambient + sunny key + soft fill (no real-time shadows; contact shadows below).
+  scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.85);
   sun.position.set(8, 14, 6);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(1024, 1024);
-  sun.shadow.camera.left = -16;
-  sun.shadow.camera.right = 16;
-  sun.shadow.camera.top = 20;
-  sun.shadow.camera.bottom = -10;
-  sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 40;
-  sun.shadow.bias = -0.0005;
   scene.add(sun);
-  const fill = new THREE.DirectionalLight(0xc9e2ff, 0.35);
+  const fill = new THREE.DirectionalLight(0xc9e2ff, 0.30);
   fill.position.set(-6, 8, -4);
   scene.add(fill);
 
@@ -119,13 +105,17 @@ export function startGame(opts){
 
 function buildPlayer(charKey){
   if (playerMesh) scene.remove(playerMesh);
+  if (playerShadow) scene.remove(playerShadow);
   const factory = CHARACTERS[charKey] || CHARACTERS.shopkeeper;
   playerMesh = factory();
-  playerMesh.scale.setScalar(0.42);  // characters are ~2.6 tall raw → ~1.1 on tile
+  playerMesh.scale.setScalar(PLAYER_SCALE);
   playerMesh.position.set(0, 0, 0);
   playerMesh.rotation.y = Math.PI;   // face +Z (forward in our world)
   playerRig = playerMesh.userData.rig || null;
   scene.add(playerMesh);
+  // Independent contact shadow, lives in world space so hop doesn't lift it.
+  playerShadow = makeShadow(0.65);
+  scene.add(playerShadow);
 }
 
 function onResize(){
@@ -133,10 +123,38 @@ function onResize(){
   const h = canvas.parentElement.clientHeight;
   renderer.setSize(w, h, false);
   const aspect = w / h;
-  const viewH = 10;
-  camera.left = -viewH * aspect; camera.right = viewH * aspect;
-  camera.top = viewH; camera.bottom = -viewH;
+  camera.left = -VIEW_H * aspect; camera.right = VIEW_H * aspect;
+  camera.top = VIEW_H; camera.bottom = -VIEW_H;
   camera.updateProjectionMatrix();
+}
+
+// ── Contact shadow (baked radial-alpha disc on the ground plane) ─────────────
+// Reused across all entities. Cheap, jaggy-free, gives every prop space anchor.
+let _shadowTex = null;
+function shadowTex(){
+  if (_shadowTex) return _shadowTex;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 128;
+  const ctx = cv.getContext('2d');
+  const g = ctx.createRadialGradient(64, 64, 4, 64, 64, 62);
+  g.addColorStop(0,    'rgba(0,0,0,0.55)');
+  g.addColorStop(0.45, 'rgba(0,0,0,0.28)');
+  g.addColorStop(1,    'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 128);
+  _shadowTex = new THREE.CanvasTexture(cv);
+  return _shadowTex;
+}
+function makeShadow(radius){
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(radius * 2, radius * 2),
+    new THREE.MeshBasicMaterial({
+      map: shadowTex(), transparent: true, depthWrite: false, opacity: 1.0,
+    })
+  );
+  m.rotation.x = -Math.PI / 2;
+  m.position.y = 0.022;       // just above tile to avoid z-fight
+  m.renderOrder = 1;
+  return m;
 }
 
 // ── Coordinate helpers ────────────────────────────────────────────────────────
@@ -346,10 +364,9 @@ function makeTree(){
   for (const yy of [0.95, 1.35, 1.65]){
     const m = new THREE.Mesh(ic, leafMat);
     m.position.y = yy;
-    m.castShadow = true; m.receiveShadow = true;
     g.add(m);
   }
-  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+  g.add(makeShadow(0.6));
   return g;
 }
 function makeHydrant(){
@@ -364,7 +381,7 @@ function makeHydrant(){
   g.add(noz);
   // top cap
   g.add(box(0.18, 0.10, 0.18, 0xb6342a, 0, 0.6, 0));
-  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+  g.add(makeShadow(0.42));
   return g;
 }
 function makeMailbox(){
@@ -372,14 +389,14 @@ function makeMailbox(){
   g.add(box(0.55, 0.55, 0.42, 0x3266a8, 0, 0.4, 0));
   g.add(box(0.55, 0.10, 0.42, 0x244b80, 0, 0.7, 0));
   g.add(box(0.1, 0.15, 0.1, P.ironD, 0, 0.13, 0));
-  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+  g.add(makeShadow(0.45));
   return g;
 }
 function makeNewsRack(){
   const g = new THREE.Group();
   g.add(box(0.6, 0.85, 0.45, P.ironD, 0, 0.45, 0));
   g.add(box(0.5, 0.22, 0.04, 0xf2c14e, 0, 0.7, 0.23));
-  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+  g.add(makeShadow(0.5));
   return g;
 }
 function makeCoin(){
@@ -418,7 +435,8 @@ function makeTaxi(){
   // top sign
   g.add(box(0.5, 0.16, 0.20, 0xfff7e6, -0.2, 1.05, 0));
   g.add(box(0.42, 0.10, 0.04, 0x15110e, -0.2, 1.05, 0.10));
-  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+  // long contact shadow under car
+  const sh = makeShadow(1.15); sh.scale.set(1.0, 0.65, 1.0); g.add(sh);
   return g;
 }
 function makeSedan(){
@@ -432,9 +450,9 @@ function makeSedan(){
   for (const [x, z] of [[0.55,0.42],[0.55,-0.42],[-0.55,0.42],[-0.55,-0.42]]){
     const w = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.22, 10), mat(0x1a1612));
     w.rotation.z = Math.PI/2; w.position.set(x, 0.18, z);
-    w.castShadow = true; g.add(w);
+    g.add(w);
   }
-  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+  const sh = makeShadow(1.05); sh.scale.set(1.0, 0.62, 1.0); g.add(sh);
   return g;
 }
 function makeTruck(){
@@ -448,9 +466,9 @@ function makeTruck(){
   for (const [x, z] of [[0.95,0.5],[0.95,-0.5],[-0.85,0.5],[-0.85,-0.5]]){
     const w = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.24, 10), mat(0x1a1612));
     w.rotation.z = Math.PI/2; w.position.set(x, 0.22, z);
-    w.castShadow = true; g.add(w);
+    g.add(w);
   }
-  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+  const sh = makeShadow(1.35); sh.scale.set(1.0, 0.62, 1.0); g.add(sh);
   return g;
 }
 function pickCar(){
@@ -467,7 +485,6 @@ function makeLog(){
   const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.30, 2.6, 8), mLog);
   trunk.rotation.z = Math.PI/2;
   trunk.position.y = 0.18;
-  trunk.castShadow = true; trunk.receiveShadow = true;
   g.add(trunk);
   // end caps darker
   for (const x of [-1.3, 1.3]){
@@ -476,6 +493,12 @@ function makeLog(){
     cap.position.set(x, 0.18, 0);
     g.add(cap);
   }
+  // log floats on river; soft contact shadow on the water tile
+  const sh = makeShadow(1.5);
+  sh.scale.set(1.0, 0.4, 1.0);
+  sh.position.y = -0.07;       // river surface sits ~0.08 below grass
+  sh.material.opacity = 0.5;
+  g.add(sh);
   return g;
 }
 
@@ -493,9 +516,9 @@ function makeTrainCar(){
   for (const x of [-1.2, 1.2]){
     const w = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.20, 0.22, 10), mat(0x1a1612));
     w.rotation.z = Math.PI/2; w.position.set(x, 0.20, 0);
-    w.castShadow = true; g.add(w);
+    g.add(w);
   }
-  g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
+  const sh = makeShadow(2.1); sh.scale.set(1.0, 0.6, 1.0); g.add(sh);
   return g;
 }
 
@@ -641,11 +664,7 @@ function attachInput(){
 function tryHop(dx, dz){
   if (player.hopping || player.dead) return;
 
-  // First hop starts the run + the chase
-  if (!started){
-    started = true;
-    chaseGrace = CHASE_DELAY;
-  }
+  if (!started) started = true;
 
   // Detach from log if riding — current gx is rounded from worldX
   if (player.riding){
@@ -698,12 +717,12 @@ function tick(){
     player.worldX = x;
     playerMesh.position.set(x, y, z);
     // slight squash anim
-    playerMesh.scale.y = 0.42 * (1 - 0.18 * Math.sin(Math.PI * t));
+    playerMesh.scale.y = PLAYER_SCALE * (1 - 0.18 * Math.sin(Math.PI * t));
     // smooth turn toward facing
     playerMesh.rotation.y = lerpAngle(playerMesh.rotation.y, Math.PI + player.facing, 12 * dt);
     if (t >= 1){
       player.hopping = false;
-      playerMesh.scale.y = 0.42;
+      playerMesh.scale.y = PLAYER_SCALE;
       onLand();
     }
   }
@@ -745,13 +764,14 @@ function tick(){
     }
   }
 
-  // Camera chase
-  if (started && !player.dead){
-    if (chaseGrace > 0) chaseGrace -= dt;
-    else chaseFloor += CHASE_SPEED * dt;
-    if (player.gz < chaseFloor){
-      die('camera');
-    }
+  // Sync independent contact shadow with player; shrink + fade while in air.
+  if (playerShadow){
+    playerShadow.position.x = playerMesh.position.x;
+    playerShadow.position.z = playerMesh.position.z;
+    const yh = Math.max(0, playerMesh.position.y);
+    const k = Math.max(0.55, 1 - yh * 0.75);
+    playerShadow.scale.setScalar(k);
+    playerShadow.material.opacity = Math.max(0.35, 1 - yh * 0.8);
   }
 
   // Lane streaming
@@ -865,8 +885,8 @@ function restart(){
   player.facing = 0;
   playerMesh.position.set(0, 0, 0);
   playerMesh.rotation.set(0, Math.PI, 0);
-  playerMesh.scale.set(0.42, 0.42, 0.42);
-  chaseFloor = 0; chaseGrace = CHASE_DELAY; started = false;
+  playerMesh.scale.set(PLAYER_SCALE, PLAYER_SCALE, PLAYER_SCALE);
+  started = false;
   runDistance = 0;
   hud.setDistance(0);
   hud.setDead(null);
@@ -893,4 +913,4 @@ function lerpAngle(a, b, t){
 }
 
 // expose for debug
-window.__bh = { player, lanesByGz, get state(){ return { runDistance, coins, chaseFloor, started, dead: player.dead }; } };
+window.__bh = { player, lanesByGz, get state(){ return { runDistance, coins, started, dead: player.dead }; } };
