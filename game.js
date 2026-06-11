@@ -14,12 +14,19 @@ const HOP_DUR      = 0.18;       // seconds
 const HOP_HEIGHT   = 0.55;
 const VIEW_H       = 7.5;        // ortho frustum half-height (smaller = zoomed in)
 const PLAYER_SCALE = 0.55;       // bumped from 0.42 so character reads on small screens
+const SURFACE_Y    = 0.20;       // y of road/grass/rail top surface — vehicles sit here
 
 // ── Globals ───────────────────────────────────────────────────────────────────
 let scene, camera, renderer, canvas;
 let clock;
 let playerMesh, playerRig;
-let sun, sunTarget;
+let sun, sunTarget, ambient, fill;
+let matHead, matTail;           // shared emissive vehicle-lamp materials (glow at night)
+let dayT = 0;                   // seconds into the day/night cycle
+const DAY_CYCLE = 80;           // seconds for one full day→night loop
+const SKY_DAY = new THREE.Color(0xb8d7ea), SKY_NIGHT = new THREE.Color(0x0e1430);
+const SUN_DAY = new THREE.Color(0xfff4d6), SUN_NIGHT = new THREE.Color(0x3a4a7a);
+const _dnSky = new THREE.Color(), _dnSun = new THREE.Color();
 let lanesByGz = new Map();      // gz → laneRecord
 let furthestAhead = -Infinity;  // largest gz that has a lane
 let furthestBehind = Infinity;  // smallest gz that has a lane
@@ -34,7 +41,39 @@ const player = {
   facing: Math.PI,              // mesh y-rot target; chars natively face +Z, so PI = world forward (-Z)
   bump: null,                   // { t, dx, dz } in-place bounce when a hop is blocked
   sinking: false,               // drown death animation
+  hopDur: HOP_DUR,              // per-character (set in buildPlayer)
+  hopHeight: HOP_HEIGHT,
 };
+
+// Playable cast — civilians + NYC archetypes (monsters excluded to keep the
+// street theme coherent). One is picked at random each run.
+const CAST = [
+  'shopkeeper', 'granny', 'oldman', 'blonde', 'kid', 'businessman', 'officeWoman',
+  'student', 'darkWoman', 'worker', 'teen', 'fitWoman', 'chef', 'bigGuy',
+  'cop', 'nurse', 'firefighter', 'construction', 'delivery', 'cowboy', 'punk',
+  'rapper', 'biker', 'goth',
+];
+// Per-character movement feel: durMul scales hop time (lower = snappier),
+// heightMul scales hop arc. Anyone not listed uses the default 1.0/1.0.
+const MOVE = {
+  kid:          { dur: 0.82, height: 1.05 },
+  teen:         { dur: 0.88, height: 1.05 },
+  student:      { dur: 0.9,  height: 1.0  },
+  fitWoman:     { dur: 0.80, height: 1.20 },
+  biker:        { dur: 0.88, height: 0.95 },
+  delivery:     { dur: 0.85, height: 1.0  },
+  cop:          { dur: 0.95, height: 1.0  },
+  businessman:  { dur: 1.15, height: 0.95 },
+  chef:         { dur: 1.05, height: 0.95 },
+  cowboy:       { dur: 1.1,  height: 1.0  },
+  rapper:       { dur: 1.1,  height: 1.0  },
+  granny:       { dur: 1.35, height: 0.78 },
+  oldman:       { dur: 1.32, height: 0.80 },
+  bigGuy:       { dur: 1.30, height: 0.85 },
+  firefighter:  { dur: 1.22, height: 0.9  },
+  construction: { dur: 1.20, height: 0.9  },
+};
+function pickChar(){ return CAST[Math.floor(Math.random() * CAST.length)]; }
 
 let coins = 0;
 let bestDistance = 0;
@@ -166,6 +205,56 @@ function fxUpdate(dt){
 function fxClear(){
   for (const p of fxActive){ p.mesh.visible = false; fxPool.push(p); }
   fxActive.length = 0;
+  for (const p of puffActive){ p.mesh.visible = false; puffPool.push(p); }
+  puffActive.length = 0;
+}
+
+// Soft cartoon puffs (round, translucent, grow + fade) — for footfall dust + foam.
+const PUFF_GEO = new THREE.IcosahedronGeometry(0.13, 0);
+const puffPool = [];
+const puffActive = [];
+function puffParticle(){
+  let p = puffPool.pop();
+  if (!p){
+    const m = new THREE.Mesh(PUFF_GEO, new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }));
+    p = { mesh: m };
+    fxGroup.add(m);
+  }
+  p.mesh.visible = true;
+  return p;
+}
+function puff(x, z, o){
+  if (!fxGroup) return;
+  o = o || {};
+  const colors = o.color || [0xeee7d6, 0xd8cfba];
+  const n = o.count || (2 + ((Math.random() * 2) | 0));
+  const y0 = o.y != null ? o.y : 0.1;
+  for (let i = 0; i < n; i++){
+    const p = puffParticle();
+    p.mesh.material.color.setHex(colors[Math.floor(Math.random() * colors.length)]);
+    p.mesh.material.opacity = 0.9;
+    const sc = (o.size || 1) * (0.5 + Math.random() * 0.45);
+    p.s0 = sc; p.mesh.scale.setScalar(sc);
+    p.y0 = y0;
+    p.mesh.position.set(x + (Math.random() - 0.5) * 0.4, y0, z + (Math.random() - 0.5) * 0.4);
+    p.t = 0; p.life = (o.life || 0.5) * (0.85 + Math.random() * 0.4);
+    p.vy = o.vy != null ? o.vy : (0.4 + Math.random() * 0.55);
+    p.vx = (Math.random() - 0.5) * (o.spread || 0.55);
+    p.vz = (Math.random() - 0.5) * (o.spread || 0.55);
+    p.grow = o.grow != null ? o.grow : 1.4;
+    puffActive.push(p);
+  }
+}
+function puffUpdate(dt){
+  for (let i = puffActive.length - 1; i >= 0; i--){
+    const d = puffActive[i]; d.t += dt; const k = d.t / d.life;
+    if (k >= 1){ d.mesh.visible = false; puffActive.splice(i, 1); puffPool.push(d); continue; }
+    d.mesh.position.x += d.vx * dt;
+    d.mesh.position.z += d.vz * dt;
+    d.mesh.position.y = d.y0 + d.vy * d.t;
+    d.mesh.scale.setScalar(d.s0 * (1 + k * d.grow));
+    d.mesh.material.opacity = 0.9 * (1 - k) * (1 - k);
+  }
 }
 
 // ── Init / Stage ──────────────────────────────────────────────────────────────
@@ -193,7 +282,8 @@ export function startGame(opts){
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   // Ambient + warm key sun (real shadowMap) + cool fill.
-  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  ambient = new THREE.AmbientLight(0xffffff, 0.55);
+  scene.add(ambient);
   sun = new THREE.DirectionalLight(0xfff4d6, 1.05);
   sun.position.set(8, 16, 6);
   sun.castShadow = true;
@@ -210,15 +300,19 @@ export function startGame(opts){
   sunTarget = new THREE.Object3D();
   scene.add(sunTarget);
   sun.target = sunTarget;
-  const fill = new THREE.DirectionalLight(0xc9e2ff, 0.28);
+  fill = new THREE.DirectionalLight(0xc9e2ff, 0.28);
   fill.position.set(-6, 8, -4);
   scene.add(fill);
+
+  // Shared vehicle-lamp materials — emissiveIntensity bumped at night.
+  matHead = new THREE.MeshStandardMaterial({ color: 0xfff4c8, emissive: 0xfff0c0, emissiveIntensity: 0, roughness: 0.6, flatShading: true });
+  matTail = new THREE.MeshStandardMaterial({ color: 0xe04030, emissive: 0xff2018, emissiveIntensity: 0, roughness: 0.6, flatShading: true });
 
   // Particle FX layer
   fxInit();
 
-  // Build player
-  buildPlayer('shopkeeper');
+  // Build player (random character each run)
+  buildPlayer(pickChar());
 
   // Build initial lanes
   for (let gz = -4; gz <= 14; gz++) addLane(gz);
@@ -248,6 +342,9 @@ export function startGame(opts){
 function buildPlayer(charKey){
   if (playerMesh) scene.remove(playerMesh);
   const factory = CHARACTERS[charKey] || CHARACTERS.shopkeeper;
+  const mv = MOVE[charKey] || {};
+  player.hopDur    = HOP_DUR * (mv.dur || 1);
+  player.hopHeight = HOP_HEIGHT * (mv.height || 1);
   playerMesh = factory();
   playerMesh.scale.setScalar(PLAYER_SCALE);
   playerMesh.position.set(0, 0, 0);
@@ -332,20 +429,12 @@ function addLane(gz){
     lane.group.add(horizon);
   }
 
-  // Thick dirt slab (or deep water for river) extending down beyond the
-  // viewport — kills the floating-strip look and makes the offscreen
-  // edge read as a slice of earth, not a hovering plank.
-  const dirtCol = kind === 'river' ? 0x1f4a72 : 0x8b6a44;
-  const dirtH   = 1.6;
-  const dirt = new THREE.Mesh(
-    new THREE.BoxGeometry(W, dirtH, TILE),
-    mat(dirtCol)
-  );
+  // Thick layered earth cross-section extending below the viewport — stacked
+  // strata bands (topsoil / clay / rock) plus occasional buried details
+  // (bones, boulders, old pipes) peeking out of the +Z cliff face.
   const dirtTopY = kind === 'grass' ? (topY - baseHeight - 0.06)
                                     : (topY - baseHeight);
-  dirt.position.set(0, dirtTopY - dirtH/2, wZ(gz));
-  dirt.receiveShadow = true;
-  lane.group.add(dirt);
+  buildStrata(lane, kind, W, dirtTopY);
 
   // Per-kind detail layer
   if (kind === 'grass') decorateGrass(lane);
@@ -367,6 +456,77 @@ function removeLane(gz){
     if (o.isMesh) { o.geometry?.dispose?.(); }
   });
   lanesByGz.delete(gz);
+}
+
+// ── Ground strata (the cliff cross-section under each lane) ───────────────────
+const SOIL_COLS = [0x6b4a2e, 0x73502f, 0x5f4329];
+const CLAY_COLS = [0xa9743f, 0x9c6b3f, 0xb07b46, 0x8f6238];
+const ROCK_COLS = [0x595550, 0x4f4b47, 0x615c56, 0x534f4a];
+const pick = arr => arr[(Math.random() * arr.length) | 0];
+
+function slab(W, h, col, y, gz, w2){
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w2 || W, h, TILE), mat(col));
+  m.position.set(0, y - h/2, wZ(gz));
+  m.receiveShadow = true;
+  return m;
+}
+
+function buildStrata(lane, kind, W, topYin){
+  const gz = lane.gz;
+
+  if (kind === 'river'){
+    // deep murky water column + dark silt bed
+    lane.group.add(slab(W, 2.3, 0x1f4a72, topYin, gz));
+    lane.group.add(slab(W, 0.6, 0x123a30, topYin - 2.3, gz));
+    return;
+  }
+
+  // Stacked earth bands, slight per-lane jitter so no two lanes read identical.
+  const soilH = 0.30 + Math.random() * 0.08;
+  const clayH = 0.60 + Math.random() * 0.20;
+  const rockH = 1.85 + Math.random() * 0.30;
+  let y = topYin;
+  lane.group.add(slab(W, soilH, pick(SOIL_COLS), y, gz));                 y -= soilH;
+  lane.group.add(slab(W, 0.05, 0x3a2a1c, y, gz, W + 0.04));               // crisp boundary line
+  lane.group.add(slab(W, clayH, pick(CLAY_COLS), y, gz));                 y -= clayH;
+  lane.group.add(slab(W, 0.05, 0x2f2a26, y, gz, W + 0.04));               // boundary line
+  lane.group.add(slab(W, rockH, pick(ROCK_COLS), y, gz));
+
+  buryDetails(lane, topYin);
+}
+
+function buryDetails(lane, topYin){
+  const gz = lane.gz;
+  const frontZ = wZ(gz) + TILE / 2;     // +Z cliff face that points at the camera
+  const r0 = Math.random();
+  const n = r0 < 0.45 ? 0 : (r0 < 0.80 ? 1 : 2);
+  for (let i = 0; i < n; i++){
+    const x = (Math.random() * 2 - 1) * 3.2;
+    const r = Math.random();
+    if (r < 0.40){
+      // bleached buried bones — skull + a few ribs
+      const y = topYin - (1.05 + Math.random() * 1.1);
+      const bone = 0xe8e0cf;
+      lane.group.add(ball(0.15, bone, x, y, frontZ));
+      lane.group.add(box(0.05, 0.05, 0.04, 0x2a2520, x - 0.05, y + 0.02, frontZ + 0.12));  // eye socket
+      lane.group.add(box(0.05, 0.05, 0.04, 0x2a2520, x + 0.05, y + 0.02, frontZ + 0.12));
+      for (let k = 0; k < 3; k++)
+        lane.group.add(box(0.26, 0.045, 0.05, bone, x + 0.30 + k * 0.015, y - 0.16 - k * 0.11, frontZ - 0.02));
+    } else if (r < 0.72){
+      // embedded boulder, half-exposed on the face
+      const y = topYin - (1.35 + Math.random() * 1.0);
+      lane.group.add(ball(0.26 + Math.random() * 0.12, pick(ROCK_COLS), x, y, frontZ - 0.06, 0));
+    } else {
+      // old buried pipe, hollow cross-section toward camera
+      const y = topYin - (0.65 + Math.random() * 0.9);
+      const pipe = cyl(0.13, 0.13, 0.5, 8, 0x7a4a2c, x, y, frontZ - 0.06);
+      pipe.rotation.x = Math.PI / 2;    // axis along Z → round end faces the camera
+      lane.group.add(pipe);
+      const hole = cyl(0.085, 0.085, 0.06, 8, 0x241a10, x, y, frontZ + 0.02);
+      hole.rotation.x = Math.PI / 2;
+      lane.group.add(hole);
+    }
+  }
 }
 
 // ── Lane materials ────────────────────────────────────────────────────────────
@@ -667,6 +827,13 @@ function _addWheels(g, list, tireR, tireT, hubColor){
     g.add(hub);
   }
 }
+// vehicle lamp — a box on a shared emissive material so all lamps glow at once
+function lamp(w, h, d, material, x, y, z){
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+  m.position.set(x, y, z);
+  return m;
+}
+
 function makeTaxi(){
   const g = new THREE.Group();
   const yellow = 0xffce2e;
@@ -687,8 +854,8 @@ function makeTaxi(){
   g.add(box(0.42, 0.09, 0.02, 0x15110e, -0.10, 1.11, -0.105));
   // headlights / taillights
   for (const z of [0.30, -0.30]){
-    g.add(box(0.05, 0.10, 0.16, 0xfff4c8, 0.99, 0.48, z));
-    g.add(box(0.05, 0.10, 0.16, 0xe04030, -0.99, 0.48, z));
+    g.add(lamp(0.05, 0.10, 0.16, matHead, 0.99, 0.48, z));
+    g.add(lamp(0.05, 0.10, 0.16, matTail, -0.99, 0.48, z));
   }
   _addWheels(g, [[0.65, 0.45],[0.65,-0.45],[-0.65, 0.45],[-0.65,-0.45]], 0.24, 0.26, 0xd0c8b0);
   g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
@@ -704,8 +871,8 @@ function makeSedan(){
   g.add(box(0.95, 0.26, 0.74, glass, -0.06, 0.75, 0));
   g.add(box(1.04, 0.08, 0.82, bodyCol, -0.06, 0.92, 0));
   for (const z of [0.28, -0.28]){
-    g.add(box(0.05, 0.09, 0.15, 0xfff4c8, 0.89, 0.45, z));
-    g.add(box(0.05, 0.09, 0.15, 0xe04030, -0.89, 0.45, z));
+    g.add(lamp(0.05, 0.09, 0.15, matHead, 0.89, 0.45, z));
+    g.add(lamp(0.05, 0.09, 0.15, matTail, -0.89, 0.45, z));
   }
   _addWheels(g, [[0.58, 0.42],[0.58,-0.42],[-0.58, 0.42],[-0.58,-0.42]], 0.22, 0.24, 0xa8a09a);
   g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
@@ -728,7 +895,11 @@ function makeTruck(){
   g.add(box(0.12, 0.06, 0.12, 0x241f1c, 0.34, 1.24, 0.40));
   // headlights
   for (const z of [0.32, -0.32]){
-    g.add(box(0.05, 0.11, 0.16, 0xfff4c8, 1.33, 0.40, z));
+    g.add(lamp(0.05, 0.11, 0.16, matHead, 1.33, 0.40, z));
+  }
+  // rear taillights
+  for (const z of [0.32, -0.32]){
+    g.add(lamp(0.04, 0.10, 0.14, matTail, -1.24, 0.40, z));
   }
   _addWheels(g, [[0.92, 0.5],[0.92,-0.5],[-0.40, 0.5],[-0.40,-0.5],[-1.00, 0.5],[-1.00,-0.5]], 0.25, 0.26, 0x8a857f);
   g.traverse(o => { if (o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
@@ -793,7 +964,7 @@ function spawnCar(lane){
   const car = pickCar();
   const m = car.mesh;
   const startX = lane.dir > 0 ? -KILL_X - 2 : KILL_X + 2;
-  m.position.set(startX, 0, wZ(lane.gz));
+  m.position.set(startX, SURFACE_Y, wZ(lane.gz));
   if (lane.dir < 0) m.rotation.y = Math.PI;
   lane.group.add(m);
   lane.mobs.push({ kind:'car', mesh:m, x:startX, dir:lane.dir, speed:lane.speed, width:car.width });
@@ -812,7 +983,7 @@ function spawnTrain(lane){
   for (let i = 0; i < 3; i++){
     const m = makeTrainCar();
     const offset = i * 3.8 * -lane.trainDir;
-    m.position.set(startX + offset, 0, wZ(lane.gz));
+    m.position.set(startX + offset, SURFACE_Y, wZ(lane.gz));
     lane.group.add(m);
     cars.push(m);
   }
@@ -1003,11 +1174,11 @@ function tick(){
   // Update player hop animation
   if (player.hopping){
     player.hopT += dt;
-    const t = Math.min(1, player.hopT / HOP_DUR);
+    const t = Math.min(1, player.hopT / player.hopDur);
     const ease = t * (2 - t);
     const x = player.hopFromX + (player.hopToX - player.hopFromX) * ease;
     const z = player.hopFromZ + (player.hopToZ - player.hopFromZ) * ease;
-    const y = Math.sin(Math.PI * t) * HOP_HEIGHT;
+    const y = Math.sin(Math.PI * t) * player.hopHeight;
     player.worldX = x;
     playerMesh.position.set(x, y, z);
     // slight squash anim
@@ -1047,6 +1218,7 @@ function tick(){
   }
 
   fxUpdate(dt);
+  puffUpdate(dt);
 
   // Update lanes (spawn + move obstacles)
   for (const lane of lanesByGz.values()){
@@ -1104,23 +1276,54 @@ function tick(){
   camera.position.y = 14;
   camera.lookAt(player.worldX, 0, wZ(player.gz) - 0.5);
 
-  // Move shadow camera with player so its frustum stays tight + crisp
-  sun.position.set(player.worldX + 8, 16, wZ(player.gz) + 6);
+  // Day/night cycle — sweeps light colour, intensity, sun angle + headlights
+  updateDayNight(dt);
   sunTarget.position.set(player.worldX, 0, wZ(player.gz));
 
   renderer.render(scene, camera);
+}
+
+// Advances a smooth day→night loop: light colour/intensity, sun angle (so
+// shadows sweep), sky + fog tint, and vehicle headlight glow after dark.
+function updateDayNight(dt){
+  dayT += dt;
+  const ph = (dayT % DAY_CYCLE) / DAY_CYCLE;          // 0..1 around the clock
+  const sunHeight = Math.sin(ph * Math.PI * 2);        // -1 (deep night) .. 1 (noon)
+  const day = THREE.MathUtils.smoothstep(sunHeight, -0.28, 0.28);  // 0 night → 1 day
+  const night = 1 - day;
+
+  // Light levels
+  sun.intensity     = 0.12 + 1.00 * day;
+  ambient.intensity = 0.16 + 0.42 * day;
+  fill.intensity    = 0.08 + 0.22 * day;
+
+  // Colours
+  _dnSky.copy(SKY_NIGHT).lerp(SKY_DAY, day);
+  scene.background.copy(_dnSky);
+  scene.fog.color.copy(_dnSky);
+  _dnSun.copy(SUN_NIGHT).lerp(SUN_DAY, day);
+  sun.color.copy(_dnSun);
+
+  // Sun position: orbit around the player so the shadow direction sweeps.
+  const az = ph * Math.PI * 2;
+  const px = player.worldX, pz = wZ(player.gz);
+  sun.position.set(px + Math.cos(az) * 9, 9 + 9 * Math.max(0, sunHeight), pz + Math.sin(az) * 9 + 3);
+
+  // Headlights glow once it gets dark
+  matHead.emissiveIntensity = night * 1.5;
+  matTail.emissiveIntensity = night * 1.1;
 }
 
 function onLand(){
   const lane = lanesByGz.get(player.gz);
   if (!lane) { die('void'); return; }
 
-  // dust puff under the feet (skip on water — splash handles that)
+  // soft dust puff under the feet (skip on water — splash handles that)
   if (lane.kind !== 'river'){
-    const dustCol = lane.kind === 'road' ? [0x6f6f6f, 0x8a8a8a, 0x9a9a9a]
-                                         : [0xb79b6a, 0xa98c57, 0xcdb585];
-    burst(player.worldX, 0.08, wZ(player.gz), {
-      count: 7, color: dustCol, speed: 1.3, up: 1.1, size: 0.13, life: 0.36, gravity: -5, spread: 1.1,
+    const dustCol = lane.kind === 'road' ? [0xcfcabf, 0xb9b4a8, 0xe2ddd2]
+                                         : [0xe7dcc2, 0xcdb585, 0xd8c9a6];
+    puff(player.worldX, wZ(player.gz), {
+      count: 4, color: dustCol, size: 1.0, life: 0.5, vy: 0.5, grow: 1.5, spread: 0.7, y: 0.12,
     });
   }
 
@@ -1193,9 +1396,11 @@ function die(reason){
   } catch(e){}
 
   const px = player.worldX, pz = wZ(player.gz);
+  let menuDelay = 700;
   if (reason === 'car' || reason === 'train'){
     SFX.crash();
     burst(px, 0.45, pz, { count: 18, color: [0xffce2e, 0xffffff, 0x241f1c, 0xe04030], speed: 3.4, up: 3.6, size: 0.17, life: 0.6 });
+    puff(px, pz, { count: 5, color: [0xbfb9ad, 0xd8d2c6, 0x9a948a], size: 1.3, life: 0.65, vy: 0.8, grow: 1.8, y: 0.3 });
     // squashed flat
     playerMesh.rotation.x = -Math.PI / 2.1;
     playerMesh.position.y = 0.10;
@@ -1203,18 +1408,26 @@ function die(reason){
   } else if (reason === 'drown' || reason === 'drift'){
     SFX.splash();
     burst(px, 0.0, pz, { count: 20, color: [0x9bcfe0, 0xffffff, 0x6cb8d1, 0x4d93b8], speed: 2.6, up: 3.4, size: 0.15, life: 0.7, gravity: -7 });
+    puff(px, pz, { count: 6, color: [0xffffff, 0xdceef5], size: 1.2, life: 0.6, vy: 0.6, grow: 1.6, y: 0.0 });
     player.sinking = true;
+    menuDelay = 850;
   } else {
     SFX.splash();
     playerMesh.rotation.x = -Math.PI / 2.1;
     playerMesh.position.y = 0.15;
   }
   setTimeout(() => SFX.over(), 240);
-  hud.setDead({ distance: runDistance, best: bestDistance, coins, reason });
+
+  // Delay the result menu so the death effect plays out in view first.
+  deathToken++;
+  const myToken = deathToken;
+  const snap = { distance: runDistance, best: bestDistance, coins, reason };
+  setTimeout(() => { if (deathToken === myToken && player.dead) hud.setDead(snap); }, menuDelay);
 
   // Submit leaderboard (if available)
   submitScore(runDistance);
 }
+let deathToken = 0;
 
 function restart(){
   // Reset state
@@ -1226,7 +1439,9 @@ function restart(){
   player.hopping = false; player.dead = false; player.riding = null;
   player.facing = Math.PI;
   player.bump = null; player.sinking = false;
+  deathToken++;   // cancel any pending death-menu timeout
   fxClear();
+  buildPlayer(pickChar());   // fresh random character each run
   playerMesh.position.set(0, 0, 0);
   playerMesh.rotation.set(0, Math.PI, 0);
   playerMesh.scale.set(PLAYER_SCALE, PLAYER_SCALE, PLAYER_SCALE);
