@@ -32,6 +32,8 @@ const player = {
   dead: false,
   riding: null,                 // { log, offsetX } when on a river log
   facing: Math.PI,              // mesh y-rot target; chars natively face +Z, so PI = world forward (-Z)
+  bump: null,                   // { t, dx, dz } in-place bounce when a hop is blocked
+  sinking: false,               // drown death animation
 };
 
 let coins = 0;
@@ -44,6 +46,127 @@ const tmpVec = new THREE.Vector3();
 
 // HUD callbacks (set by index.html)
 let hud = { setDistance(){}, setCoin(){}, setDead(){}, setReady(){} };
+
+// ── Audio (WebAudio polish kit — master compressor + per-sound envelopes) ──────
+let actx = null, master = null;
+function initAudio(){
+  if (actx){ if (actx.state === 'suspended') actx.resume(); return; }
+  try {
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    const comp = actx.createDynamicsCompressor();
+    comp.threshold.value = -14; comp.knee.value = 24; comp.ratio.value = 4;
+    comp.attack.value = 0.003; comp.release.value = 0.18;
+    master = actx.createGain();
+    master.gain.value = 0.5;
+    master.connect(comp); comp.connect(actx.destination);
+  } catch(e){ actx = null; }
+}
+function tone(freq, dur, o){
+  if (!actx) return;
+  o = o || {};
+  const t0 = actx.currentTime + (o.delay || 0);
+  const osc = actx.createOscillator();
+  osc.type = o.type || 'sine';
+  osc.frequency.setValueAtTime(freq, t0);
+  if (o.slideTo) osc.frequency.exponentialRampToValueAtTime(o.slideTo, t0 + dur);
+  const lpf = actx.createBiquadFilter();
+  lpf.type = 'lowpass'; lpf.frequency.value = o.lp || 2200;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(o.gain || 0.3, t0 + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  osc.connect(lpf); lpf.connect(g); g.connect(master);
+  osc.start(t0); osc.stop(t0 + dur + 0.02);
+}
+function noise(dur, o){
+  if (!actx) return;
+  o = o || {};
+  const t0 = actx.currentTime + (o.delay || 0);
+  const n = Math.floor(actx.sampleRate * dur);
+  const buf = actx.createBuffer(1, n, actx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+  const src = actx.createBufferSource(); src.buffer = buf;
+  const lpf = actx.createBiquadFilter(); lpf.type = 'lowpass'; lpf.frequency.value = o.lp || 1200;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(o.gain || 0.3, t0);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  src.connect(lpf); lpf.connect(g);
+  if (o.hp){ const hpf = actx.createBiquadFilter(); hpf.type = 'highpass'; hpf.frequency.value = o.hp; g.connect(hpf); hpf.connect(master); }
+  else g.connect(master);
+  src.start(t0); src.stop(t0 + dur + 0.02);
+}
+const SFX = {
+  hop(){ tone(420, 0.11, { type:'sine', gain:0.20, lp:1800, slideTo:640 }); },
+  blocked(){ tone(150, 0.12, { type:'square', gain:0.16, lp:650, slideTo:90 }); noise(0.07, { gain:0.10, lp:500 }); },
+  coin(){ tone(880, 0.07, { type:'triangle', gain:0.18, lp:4000 }); tone(1320, 0.10, { type:'triangle', gain:0.16, lp:5000, delay:0.06 }); },
+  crash(){ noise(0.32, { gain:0.5, lp:1500, hp:120 }); tone(120, 0.3, { type:'sawtooth', gain:0.22, lp:800, slideTo:48 }); },
+  splash(){ noise(0.42, { gain:0.42, lp:3800, hp:380 }); tone(300, 0.22, { type:'sine', gain:0.14, lp:1500, slideTo:120 }); },
+  over(){ tone(330, 0.18, { type:'triangle', gain:0.20, slideTo:247 }); tone(196, 0.26, { type:'triangle', gain:0.18, slideTo:147, delay:0.16 }); },
+};
+
+// ── Particle FX ────────────────────────────────────────────────────────────────
+let fxGroup;
+const fxPool = [];
+const fxActive = [];
+function fxInit(){ fxGroup = new THREE.Group(); scene.add(fxGroup); }
+function fxParticle(){
+  let p = fxPool.pop();
+  if (!p){
+    const m = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({ flatShading: true, roughness: 0.85 })
+    );
+    p = { mesh: m };
+    fxGroup.add(m);
+  }
+  p.mesh.visible = true;
+  return p;
+}
+function burst(x, y, z, o){
+  if (!fxGroup) return;
+  o = o || {};
+  const count = o.count || 10, speed = o.speed || 2.2, up = o.up || 2.5;
+  const size = o.size || 0.12, life = o.life || 0.5, gravity = o.gravity != null ? o.gravity : -9;
+  const spread = o.spread || 1, color = o.color || 0xffffff;
+  for (let i = 0; i < count; i++){
+    const p = fxParticle();
+    const hex = Array.isArray(color) ? color[Math.floor(Math.random() * color.length)] : color;
+    p.mesh.material.color.setHex(hex);
+    const s = size * (0.6 + Math.random() * 0.8);
+    p.baseScale = s; p.mesh.scale.setScalar(s);
+    p.mesh.position.set(x, y, z);
+    const ang = Math.random() * Math.PI * 2;
+    const sp = speed * (0.4 + Math.random() * 0.8);
+    p.vx = Math.cos(ang) * sp * spread;
+    p.vz = Math.sin(ang) * sp * spread;
+    p.vy = up * (0.4 + Math.random() * 0.9);
+    p.life = p.maxLife = life * (0.7 + Math.random() * 0.6);
+    p.gravity = gravity;
+    p.spin = (Math.random() - 0.5) * 12;
+    fxActive.push(p);
+  }
+}
+function fxUpdate(dt){
+  for (let i = fxActive.length - 1; i >= 0; i--){
+    const p = fxActive[i];
+    p.life -= dt;
+    if (p.life <= 0){ p.mesh.visible = false; fxActive.splice(i, 1); fxPool.push(p); continue; }
+    p.vy += p.gravity * dt;
+    p.mesh.position.x += p.vx * dt;
+    p.mesh.position.y += p.vy * dt;
+    p.mesh.position.z += p.vz * dt;
+    if (p.mesh.position.y < 0.02){ p.mesh.position.y = 0.02; p.vy *= -0.35; p.vx *= 0.6; p.vz *= 0.6; }
+    p.mesh.rotation.x += p.spin * dt;
+    p.mesh.rotation.y += p.spin * 0.7 * dt;
+    const k = p.life / p.maxLife;
+    p.mesh.scale.setScalar(p.baseScale * (0.25 + 0.75 * k));
+  }
+}
+function fxClear(){
+  for (const p of fxActive){ p.mesh.visible = false; fxPool.push(p); }
+  fxActive.length = 0;
+}
 
 // ── Init / Stage ──────────────────────────────────────────────────────────────
 export function startGame(opts){
@@ -90,6 +213,9 @@ export function startGame(opts){
   const fill = new THREE.DirectionalLight(0xc9e2ff, 0.28);
   fill.position.set(-6, 8, -4);
   scene.add(fill);
+
+  // Particle FX layer
+  fxInit();
 
   // Build player
   buildPlayer('shopkeeper');
@@ -532,11 +658,12 @@ function _addWheels(g, list, tireR, tireT, hubColor){
   const tireMat = mat(0x241f1c);
   const hubMat  = mat(hubColor || 0xb5b0a8);
   for (const [x, z] of list){
-    const tire = new THREE.Mesh(new THREE.CylinderGeometry(tireR, tireR, tireT, 14), tireMat);
-    tire.rotation.z = Math.PI/2; tire.position.set(x, tireR, z);
+    // axle along Z (perpendicular to travel) so the round face shows to the side camera
+    const tire = new THREE.Mesh(new THREE.CylinderGeometry(tireR, tireR, tireT, 16), tireMat);
+    tire.rotation.x = Math.PI/2; tire.position.set(x, tireR, z);
     g.add(tire);
     const hub = new THREE.Mesh(new THREE.CylinderGeometry(tireR * 0.5, tireR * 0.5, tireT + 0.03, 10), hubMat);
-    hub.rotation.z = Math.PI/2; hub.position.set(x, tireR, z);
+    hub.rotation.x = Math.PI/2; hub.position.set(x, tireR, z);
     g.add(hub);
   }
 }
@@ -778,6 +905,7 @@ function attachInput(){
   const DEAD_R = 36;        // any tap within DEAD_R of center → forward
   const SIDE_RATIO = 1.15;
   const onDown = (e) => {
+    initAudio();   // first touch unlocks/creates the AudioContext
     if (player.dead) { restart(); skipNextUp = true; return; }
     downX = e.clientX; downY = e.clientY; downT = performance.now();
   };
@@ -810,6 +938,7 @@ function attachInput(){
 
   // Keyboard for desktop debug
   window.addEventListener('keydown', (e) => {
+    initAudio();
     if (player.dead && (e.key === 'r' || e.key === 'R' || e.key === ' ')){ restart(); return; }
     if (e.key === 'ArrowUp' || e.key === 'w') tryHop(0, 1);
     else if (e.key === 'ArrowDown' || e.key === 's') tryHop(0, -1);
@@ -819,27 +948,27 @@ function attachInput(){
 }
 
 function tryHop(dx, dz){
-  if (player.hopping || player.dead) return;
+  if (player.hopping || player.dead || player.bump) return;
+
+  const baseGx   = player.riding ? Math.round(player.worldX) : player.gx;
+  const targetGx = baseGx + dx;
+  const targetGz = player.gz + dz;
+
+  // Blocked? off the playable strip, no lane, or a static block sits there
+  let blocked = Math.abs(targetGx) > HALF_WIDTH;
+  const targetLane = lanesByGz.get(targetGz);
+  if (!targetLane) blocked = true;
+  else for (const m of targetLane.mobs){
+    if (m.kind === 'block' && m.gx === targetGx){ blocked = true; break; }
+  }
+  if (blocked){ bumpInPlace(dx, dz); return; }
 
   if (!started) started = true;
 
   // Detach from log if riding — current gx is rounded from worldX
   if (player.riding){
-    player.gx = Math.round(player.worldX);
+    player.gx = baseGx;
     player.riding = null;
-  }
-
-  const targetGx = player.gx + dx;
-  const targetGz = player.gz + dz;
-
-  // Can't go off the playable strip (allow up to ±HALF_WIDTH; outside is tree zone)
-  if (Math.abs(targetGx) > HALF_WIDTH) return;
-
-  // Check static blocks on target lane
-  const targetLane = lanesByGz.get(targetGz);
-  if (!targetLane) return;
-  for (const m of targetLane.mobs){
-    if (m.kind === 'block' && m.gx === targetGx) return;
   }
 
   // Begin hop
@@ -850,12 +979,20 @@ function tryHop(dx, dz){
   player.gx = targetGx;
   player.gz = targetGz;
   player.facing = Math.atan2(dx, -dz);   // face along hop direction
+  SFX.hop();
 
   // distance score = furthest gz reached
   if (targetGz > runDistance){
     runDistance = targetGz;
     hud.setDistance(runDistance);
   }
+}
+
+function bumpInPlace(dx, dz){
+  if (player.hopping || player.bump || player.dead) return;
+  player.bump = { t: 0, dx, dz };
+  player.facing = Math.atan2(dx, -dz);   // turn to face the wall we hit
+  SFX.blocked();
 }
 
 // ── Game loop ────────────────────────────────────────────────────────────────
@@ -882,7 +1019,34 @@ function tick(){
       playerMesh.scale.y = PLAYER_SCALE;
       onLand();
     }
+  } else if (player.bump){
+    // in-place bounce when a hop was blocked (still registers the tap visually)
+    player.bump.t += dt;
+    const bt = Math.min(1, player.bump.t / 0.16);
+    const arc = Math.sin(Math.PI * bt);
+    const lean = arc * 0.16;
+    playerMesh.position.set(
+      player.worldX + player.bump.dx * lean * 0.35,
+      arc * 0.18,
+      wZ(player.gz) + (-player.bump.dz) * lean * 0.35
+    );
+    playerMesh.scale.y = PLAYER_SCALE * (1 - 0.12 * arc);
+    playerMesh.rotation.y = lerpAngle(playerMesh.rotation.y, player.facing, 16 * dt);
+    if (bt >= 1){
+      player.bump = null;
+      playerMesh.scale.y = PLAYER_SCALE;
+      playerMesh.position.set(player.worldX, 0, wZ(player.gz));
+    }
   }
+
+  // Drown sink animation
+  if (player.dead && player.sinking){
+    playerMesh.position.y = lerp(playerMesh.position.y, -1.6, 5 * dt);
+    const ns = lerp(playerMesh.scale.x, PLAYER_SCALE * 0.3, 5 * dt);
+    playerMesh.scale.set(ns, ns, ns);
+  }
+
+  fxUpdate(dt);
 
   // Update lanes (spawn + move obstacles)
   for (const lane of lanesByGz.values()){
@@ -913,6 +1077,8 @@ function tick(){
             m.taken = true;
             m.mesh.visible = false;
             coins++;
+            SFX.coin();
+            burst(wX(m.gx), 0.4, wZ(lane.gz), { count: 6, color: [0xffd95e, 0xfff2b0], speed: 1.6, up: 2.0, size: 0.1, life: 0.4 });
             try { localStorage.setItem('bh.coins', String(coins)); } catch(e){}
             hud.setCoin(coins);
           }
@@ -948,6 +1114,15 @@ function tick(){
 function onLand(){
   const lane = lanesByGz.get(player.gz);
   if (!lane) { die('void'); return; }
+
+  // dust puff under the feet (skip on water — splash handles that)
+  if (lane.kind !== 'river'){
+    const dustCol = lane.kind === 'road' ? [0x6f6f6f, 0x8a8a8a, 0x9a9a9a]
+                                         : [0xb79b6a, 0xa98c57, 0xcdb585];
+    burst(player.worldX, 0.08, wZ(player.gz), {
+      count: 7, color: dustCol, speed: 1.3, up: 1.1, size: 0.13, life: 0.36, gravity: -5, spread: 1.1,
+    });
+  }
 
   if (lane.kind === 'river'){
     // Must land on a log
@@ -1016,9 +1191,25 @@ function die(reason){
       localStorage.setItem('bh.bestCoins', String(bestCoins));
     }
   } catch(e){}
-  // Tilt the body to "flat"
-  playerMesh.rotation.x = -Math.PI / 2.1;
-  playerMesh.position.y = 0.15;
+
+  const px = player.worldX, pz = wZ(player.gz);
+  if (reason === 'car' || reason === 'train'){
+    SFX.crash();
+    burst(px, 0.45, pz, { count: 18, color: [0xffce2e, 0xffffff, 0x241f1c, 0xe04030], speed: 3.4, up: 3.6, size: 0.17, life: 0.6 });
+    // squashed flat
+    playerMesh.rotation.x = -Math.PI / 2.1;
+    playerMesh.position.y = 0.10;
+    playerMesh.scale.y = PLAYER_SCALE * 0.35;
+  } else if (reason === 'drown' || reason === 'drift'){
+    SFX.splash();
+    burst(px, 0.0, pz, { count: 20, color: [0x9bcfe0, 0xffffff, 0x6cb8d1, 0x4d93b8], speed: 2.6, up: 3.4, size: 0.15, life: 0.7, gravity: -7 });
+    player.sinking = true;
+  } else {
+    SFX.splash();
+    playerMesh.rotation.x = -Math.PI / 2.1;
+    playerMesh.position.y = 0.15;
+  }
+  setTimeout(() => SFX.over(), 240);
   hud.setDead({ distance: runDistance, best: bestDistance, coins, reason });
 
   // Submit leaderboard (if available)
@@ -1034,6 +1225,8 @@ function restart(){
   player.gx = 0; player.gz = 0; player.worldX = 0;
   player.hopping = false; player.dead = false; player.riding = null;
   player.facing = Math.PI;
+  player.bump = null; player.sinking = false;
+  fxClear();
   playerMesh.position.set(0, 0, 0);
   playerMesh.rotation.set(0, Math.PI, 0);
   playerMesh.scale.set(PLAYER_SCALE, PLAYER_SCALE, PLAYER_SCALE);
