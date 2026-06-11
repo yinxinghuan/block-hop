@@ -1273,19 +1273,18 @@ function tick(){
       restLimbs();
     }
   } else if (!player.dead){
-    // Idle breathing — gentle vertical bob, chest swell (feet planted) and a faint arm sway.
+    // Idle bounce — perky hop-in-place: ball-bounce height, squash on landing /
+    // stretch at the apex, arms & legs lift on the way up.
     const t = performance.now() * 0.001;
-    const breath = Math.sin(t * 4.8);                 // livelier ~1.3s cycle
-    const rise = 0.5 + 0.5 * breath;                  // 0..1
-    playerMesh.position.y = 0.11 * rise;              // visible lift, never sinks into the tile
-    playerMesh.scale.y = PLAYER_SCALE * (1 + 0.06 * breath);
+    const air = Math.abs(Math.sin(t * 3.2));          // 0 = on the ground, 1 = apex, ~1s bounces
+    playerMesh.position.y = 0.24 * air;               // real little hop off the tile
+    playerMesh.scale.y = PLAYER_SCALE * (0.90 + 0.18 * air);   // squash low, stretch high
     if (playerRig && player.rigBase){
       const b = player.rigBase;
-      const sway = 0.22 * rise;
-      playerRig.armL.rotation.x = b.armL - sway;
-      playerRig.armR.rotation.x = b.armR - sway;
-      playerRig.legL.rotation.x = b.legL;
-      playerRig.legR.rotation.x = b.legR;
+      playerRig.armL.rotation.x = b.armL - 0.32 * air;
+      playerRig.armR.rotation.x = b.armR - 0.32 * air;
+      playerRig.legL.rotation.x = b.legL + 0.20 * air;
+      playerRig.legR.rotation.x = b.legR + 0.20 * air;
     }
   }
 
