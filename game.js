@@ -394,8 +394,8 @@ function poseLimbs(sw, dir){
   const b = player.rigBase;
   playerRig.legL.rotation.x = b.legL + sw * (0.75 + 0.30 * dir);
   playerRig.legR.rotation.x = b.legR + sw * (0.75 - 0.30 * dir);
-  playerRig.armL.rotation.x = b.armL - sw * (0.55 - 0.25 * dir);
-  playerRig.armR.rotation.x = b.armR - sw * (0.55 + 0.25 * dir);
+  playerRig.armL.rotation.x = b.armL - sw * (1.05 - 0.35 * dir);
+  playerRig.armR.rotation.x = b.armR - sw * (1.05 + 0.35 * dir);
 }
 function restLimbs(){
   if (!playerRig || !player.rigBase) return;
