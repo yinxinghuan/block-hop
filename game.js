@@ -71,6 +71,7 @@ const NAMES = {
   vampire:'Vampire', werewolf:'Werewolf', zombie:'Zombie', ghost:'Ghost', skeleton:'Skeleton', mummy:'Mummy',
 };
 let unlocked = new Set(STARTERS);
+let selectedChar = null;   // null = random from unlocked pool each run
 // Per-character movement feel: durMul scales hop time (lower = snappier),
 // heightMul scales hop arc. Anyone not listed uses the default 1.0/1.0.
 const MOVE = {
@@ -92,6 +93,7 @@ const MOVE = {
   construction: { dur: 1.20, height: 0.9  },
 };
 function pickChar(){
+  if (selectedChar && unlocked.has(selectedChar)) return selectedChar;
   const pool = ROSTER.filter(k => unlocked.has(k));
   return pool[Math.floor(Math.random() * pool.length)] || 'shopkeeper';
 }
@@ -338,7 +340,19 @@ export function startGame(opts){
   fxInit();
   initWeather();
 
-  // Build player (random character each run)
+  // Restore save before the first buildPlayer so the selected character applies
+  try {
+    bestDistance = +localStorage.getItem('bh.bestDist') || 0;
+    bestCoins    = +localStorage.getItem('bh.bestCoins') || 0;
+    coins        = +localStorage.getItem('bh.coins') || 0;
+    const saved = JSON.parse(localStorage.getItem('bh.unlocked') || '[]');
+    if (Array.isArray(saved)) for (const k of saved) if (ROSTER.includes(k)) unlocked.add(k);
+    const sel = localStorage.getItem('bh.selected');
+    if (sel && unlocked.has(sel)) selectedChar = sel;
+  } catch(e) {}
+  hud.setCoin(coins);
+
+  // Build player (selected character, or random each run)
   buildPlayer(pickChar());
 
   // Build initial lanes
@@ -351,21 +365,11 @@ export function startGame(opts){
   // Input
   attachInput();
 
-  // Restore best
-  try {
-    bestDistance = +localStorage.getItem('bh.bestDist') || 0;
-    bestCoins    = +localStorage.getItem('bh.bestCoins') || 0;
-    coins        = +localStorage.getItem('bh.coins') || 0;
-    const saved = JSON.parse(localStorage.getItem('bh.unlocked') || '[]');
-    if (Array.isArray(saved)) for (const k of saved) if (ROSTER.includes(k)) unlocked.add(k);
-  } catch(e) {}
-  hud.setCoin(coins);
-
   clock = new THREE.Clock();
   hud.setReady(true);
   requestAnimationFrame(tick);
 
-  return { restart, revive, reviveInfo, getCoins, getRoster, unlock: unlockChar, thumb: makeThumb,
+  return { restart, revive, reviveInfo, getCoins, getRoster, unlock: unlockChar, select: selectChar, thumb: makeThumb,
            hop: (dx, dz) => { initAudio(); tryHop(dx, dz); } };
 }
 
@@ -1658,7 +1662,7 @@ function restart(){
   player.grace = 0; reviveCount = 0;
   deathToken++;   // cancel any pending death-menu timeout
   fxClear();
-  buildPlayer(pickChar());   // fresh random character each run
+  buildPlayer(pickChar());   // selected character, or a fresh random one
   playerMesh.position.set(0, SURFACE_Y, 0);
   playerMesh.rotation.set(0, Math.PI, 0);
   playerMesh.scale.set(PLAYER_SCALE, PLAYER_SCALE, PLAYER_SCALE);
@@ -1722,18 +1726,49 @@ function revive(){
 // ── Character unlock roster ──────────────────────────────────────────────────
 function getCoins(){ return coins; }
 function getRoster(){
-  return ROSTER.map(key => ({ key, name: NAMES[key] || key, unlocked: unlocked.has(key) }));
+  return ROSTER.map(key => ({
+    key, name: NAMES[key] || key,
+    unlocked: unlocked.has(key),
+    selected: key === selectedChar,
+    cost: UNLOCK_COST,
+  }));
 }
+
+// Swap the visible character right away on the title screen / death card;
+// mid-run the roster is unreachable, so no live swap can happen there.
+function applySelectedNow(){
+  if (started && !player.dead) return;
+  if (player.dead) return;          // death card: next restart picks it up
+  buildPlayer(pickChar());
+  playerMesh.position.set(player.worldX, SURFACE_Y, wZ(player.gz));
+  playerMesh.rotation.set(0, player.facing, 0);
+  playerMesh.scale.set(PLAYER_SCALE, PLAYER_SCALE, PLAYER_SCALE);
+}
+
+function selectChar(key){
+  if (key !== null && (!ROSTER.includes(key) || !unlocked.has(key))) return false;
+  selectedChar = key;
+  try {
+    if (key) localStorage.setItem('bh.selected', key);
+    else localStorage.removeItem('bh.selected');
+  } catch(e){}
+  applySelectedNow();
+  return true;
+}
+
 function unlockChar(key){
   if (unlocked.has(key) || !ROSTER.includes(key) || coins < UNLOCK_COST) return false;
   coins -= UNLOCK_COST;
   unlocked.add(key);
+  selectedChar = key;               // a fresh purchase goes straight into play
   try {
     localStorage.setItem('bh.coins', String(coins));
     localStorage.setItem('bh.unlocked', JSON.stringify([...unlocked]));
+    localStorage.setItem('bh.selected', key);
   } catch(e){}
   hud.setCoin(coins);
   SFX.coin();
+  applySelectedNow();
   return true;
 }
 

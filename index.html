@@ -350,7 +350,12 @@
   }
   .ritem.locked { background:#efe7d6; }
   .ritem.locked .rthumb { filter:grayscale(.85) brightness(.9); opacity:.7; }
+  .ritem.selected { border-color:var(--teal); box-shadow:0 0 0 2px var(--teal) inset; background:#f0fbfa; }
   .ritem img.rthumb { width:100%; aspect-ratio:1/1; display:block; image-rendering:auto; }
+  .ritem .rthumb.rrandom {
+    width:100%; aspect-ratio:1/1; display:flex; align-items:center; justify-content:center;
+    font-family:var(--pow); font-size:46px; color:var(--teal);
+  }
   .ritem .rname {
     font-family:var(--comic); font-size:13px; color:var(--ink);
     line-height:1.05; margin-top:2px; letter-spacing:.02em;
@@ -361,6 +366,7 @@
     display:inline-block; padding:2px 8px; border-radius:999px; letter-spacing:.04em;
   }
   .ritem .rtag.own  { color:var(--teal); }
+  .ritem .rtag.use  { background:var(--teal); border:2px solid var(--ink); color:#fff; }
   .ritem .rtag.buy  { background:var(--yellow); border:2px solid var(--ink); color:var(--ink); }
   .ritem .rtag.cant { background:#ded6c7; border:2px solid #b3a994; color:#8a8175; }
   #rClose {
@@ -692,23 +698,46 @@ function renderRoster(){
   rCoinEl.textContent = String(api.getCoins());
   const list = api.getRoster();
   const coins = api.getCoins();
+  const anySelected = list.some((i) => i.selected);
   rgridEl.innerHTML = '';
+
+  // Random mode cell — the default: a different unlocked character every run
+  {
+    const cell = document.createElement('div');
+    cell.className = 'ritem' + (anySelected ? '' : ' selected');
+    const q = document.createElement('div');
+    q.className = 'rthumb rrandom'; q.textContent = '?';
+    const name = document.createElement('div');
+    name.className = 'rname'; name.textContent = 'Random';
+    const tag = document.createElement('span');
+    tag.className = 'rtag ' + (anySelected ? 'own' : 'use');
+    tag.textContent = anySelected ? 'PICK' : 'IN USE';
+    cell.appendChild(q); cell.appendChild(name); cell.appendChild(tag);
+    if (anySelected) cell.addEventListener('click', () => { api.select(null); renderRoster(); });
+    rgridEl.appendChild(cell);
+  }
+
   for (const item of list){
     const cell = document.createElement('div');
-    cell.className = 'ritem' + (item.unlocked ? '' : ' locked');
+    cell.className = 'ritem' + (item.unlocked ? '' : ' locked') + (item.selected ? ' selected' : '');
     const img = document.createElement('img');
     img.className = 'rthumb'; img.alt = item.name; img.draggable = false;
     img.src = thumbFor(item.key);
     const name = document.createElement('div');
     name.className = 'rname'; name.textContent = item.name;
     const tag = document.createElement('span');
-    if (item.unlocked){
-      tag.className = 'rtag own'; tag.textContent = 'OWNED';
-    } else if (coins >= 20){
-      tag.className = 'rtag buy'; tag.textContent = '$20';
+    if (item.selected){
+      tag.className = 'rtag use'; tag.textContent = 'IN USE';
+      // Tapping the locked-in character again releases it — back to random
+      cell.addEventListener('click', () => { api.select(null); renderRoster(); });
+    } else if (item.unlocked){
+      tag.className = 'rtag own'; tag.textContent = 'PICK';
+      cell.addEventListener('click', () => { if (api.select(item.key)) renderRoster(); });
+    } else if (coins >= item.cost){
+      tag.className = 'rtag buy'; tag.textContent = '$' + item.cost;
       cell.addEventListener('click', () => { if (api.unlock(item.key)) renderRoster(); });
     } else {
-      tag.className = 'rtag cant'; tag.textContent = '$20';
+      tag.className = 'rtag cant'; tag.textContent = '$' + item.cost;
     }
     cell.appendChild(img); cell.appendChild(name); cell.appendChild(tag);
     rgridEl.appendChild(cell);
