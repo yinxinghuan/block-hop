@@ -1202,7 +1202,10 @@ function tryHop(dx, dz){
   }
   if (blocked){ bumpInPlace(dx, dz); return; }
 
-  if (!started) started = true;
+  // First successful hop in any direction proves the player knows the input —
+  // drop the tutorial (it used to hide only on forward progress, so side/back
+  // hops left it stuck on screen)
+  if (!started){ started = true; hud.setReady(false); }
 
   // Detach from log if riding — current gx is rounded from worldX
   if (player.riding){

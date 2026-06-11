@@ -498,8 +498,8 @@ const hud = {
     overEl.classList.add('show');
     setTimeout(refreshLB, 1200);   // pull the board again once the new score has landed
   },
-  setReady(){
-    hintEl.classList.add('show');
+  setReady(on){
+    hintEl.classList.toggle('show', on !== false);
   },
 };
 
