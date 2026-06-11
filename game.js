@@ -18,8 +18,6 @@ const SURFACE_Y    = 0.20;       // y of road/grass/rail top surface — vehicle
 
 // ── Globals ───────────────────────────────────────────────────────────────────
 let scene, camera, renderer, canvas;
-let clipL, clipR;               // vertical cut-planes at the L/R screen edges (clean cross-section exit)
-const _camRight = new THREE.Vector3();   // scratch — camera world right-vector, reused each frame
 let clock;
 let playerMesh, playerRig;
 let sun, sunTarget, ambient, fill;
@@ -309,12 +307,6 @@ export function startGame(opts){
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-  // Global cut-planes: anything past the L/R screen edge is sliced flat instead of
-  // popping out whole. Normals/offsets are refreshed each frame in tick().
-  clipL = new THREE.Plane(new THREE.Vector3( 1, 0, 0), 0);
-  clipR = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
-  renderer.clippingPlanes = [clipL, clipR];
-
   // Ambient + warm key sun (real shadowMap) + cool fill.
   ambient = new THREE.AmbientLight(0xffffff, 0.55);
   scene.add(ambient);
@@ -383,7 +375,7 @@ function buildPlayer(charKey){
   player.hopHeight = HOP_HEIGHT * (mv.height || 1);
   playerMesh = factory();
   playerMesh.scale.setScalar(PLAYER_SCALE);
-  playerMesh.position.set(0, 0, 0);
+  playerMesh.position.set(0, SURFACE_Y, 0);
   playerMesh.rotation.y = Math.PI;   // face +Z (forward in our world)
   playerRig = playerMesh.userData.rig || null;
   player.rigBase = playerRig ? {
@@ -1245,7 +1237,7 @@ function tick(){
     const ease = t * (2 - t);
     const x = player.hopFromX + (player.hopToX - player.hopFromX) * ease;
     const z = player.hopFromZ + (player.hopToZ - player.hopFromZ) * ease;
-    const y = Math.sin(Math.PI * t) * player.hopHeight;
+    const y = SURFACE_Y + Math.sin(Math.PI * t) * player.hopHeight;
     player.worldX = x;
     playerMesh.position.set(x, y, z);
     // slight squash anim
@@ -1268,7 +1260,7 @@ function tick(){
     const lean = arc * 0.16;
     playerMesh.position.set(
       player.worldX + player.bump.dx * lean * 0.35,
-      arc * 0.18,
+      SURFACE_Y + arc * 0.18,
       wZ(player.gz) + (-player.bump.dz) * lean * 0.35
     );
     playerMesh.scale.y = PLAYER_SCALE * (1 - 0.12 * arc);
@@ -1277,7 +1269,7 @@ function tick(){
     if (bt >= 1){
       player.bump = null;
       playerMesh.scale.y = PLAYER_SCALE;
-      playerMesh.position.set(player.worldX, 0, wZ(player.gz));
+      playerMesh.position.set(player.worldX, SURFACE_Y, wZ(player.gz));
       restLimbs();
     }
   } else if (!player.dead){
@@ -1285,7 +1277,7 @@ function tick(){
     // stretch at the apex, arms & legs lift on the way up.
     const t = performance.now() * 0.001;
     const air = Math.abs(Math.sin(t * 3.2));          // 0 = on the ground, 1 = apex, ~1s bounces
-    playerMesh.position.y = 0.06 * air;               // small hop, never dips below rest (y>=0)
+    playerMesh.position.y = SURFACE_Y + 0.06 * air;   // rest feet on the surface; small hop never dips below it
     playerMesh.scale.y = PLAYER_SCALE * (1 + 0.05 * air);   // stretch up only — never compress below rest, so feet stay put
     if (playerRig && player.rigBase){
       const b = player.rigBase;
@@ -1361,16 +1353,6 @@ function tick(){
   camera.position.z = lerp(camera.position.z, targetCamZ, 6 * dt);
   camera.position.y = 14;
   camera.lookAt(player.worldX, 0, wZ(player.gz) - 0.5);
-
-  // Slide the cut-planes to the live screen edges. Aligning the plane normals to the
-  // camera's world right-vector (not world-X) keeps the slice flush with the edge
-  // despite the slight camera yaw, so models exit by being sheared, not vanishing.
-  camera.updateMatrixWorld();
-  const right = _camRight.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
-  const halfW = camera.right;                       // ortho half-width = VIEW_H * aspect
-  const camDotRight = right.dot(camera.position);
-  clipL.normal.copy(right);                clipL.constant = -camDotRight + halfW;
-  clipR.normal.copy(right).multiplyScalar(-1); clipR.constant = camDotRight + halfW;
 
   // Day/night cycle — sweeps light colour, intensity, sun angle + headlights
   updateDayNight(dt);
@@ -1514,7 +1496,7 @@ function die(reason){
     puff(px, pz, { count: 5, color: [0xbfb9ad, 0xd8d2c6, 0x9a948a], size: 1.3, life: 0.65, vy: 0.8, grow: 1.8, y: 0.3 });
     // squashed flat
     playerMesh.rotation.x = -Math.PI / 2.1;
-    playerMesh.position.y = 0.10;
+    playerMesh.position.y = SURFACE_Y;
     playerMesh.scale.y = PLAYER_SCALE * 0.35;
   } else if (reason === 'drown' || reason === 'drift'){
     SFX.splash();
@@ -1525,7 +1507,7 @@ function die(reason){
   } else {
     SFX.splash();
     playerMesh.rotation.x = -Math.PI / 2.1;
-    playerMesh.position.y = 0.15;
+    playerMesh.position.y = SURFACE_Y + 0.05;
   }
   setTimeout(() => SFX.over(), 240);
 
@@ -1554,7 +1536,7 @@ function restart(){
   deathToken++;   // cancel any pending death-menu timeout
   fxClear();
   buildPlayer(pickChar());   // fresh random character each run
-  playerMesh.position.set(0, 0, 0);
+  playerMesh.position.set(0, SURFACE_Y, 0);
   playerMesh.rotation.set(0, Math.PI, 0);
   playerMesh.scale.set(PLAYER_SCALE, PLAYER_SCALE, PLAYER_SCALE);
   started = false;
@@ -1606,7 +1588,7 @@ function revive(){
 
   playerMesh.rotation.set(0, Math.PI, 0);
   playerMesh.scale.set(PLAYER_SCALE, PLAYER_SCALE, PLAYER_SCALE);
-  playerMesh.position.set(player.worldX, 0, wZ(player.gz));
+  playerMesh.position.set(player.worldX, SURFACE_Y, wZ(player.gz));
   restLimbs();
 
   burst(player.worldX, 0.5, wZ(player.gz), { count: 16, color: [0x3fb6ac, 0xffffff, 0xffce2e], speed: 2.6, up: 3.2, size: 0.14, life: 0.6 });
