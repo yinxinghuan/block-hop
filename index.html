@@ -67,18 +67,49 @@
     font-family:var(--comic); font-size:16px;
   }
 
-  #hint {
-    bottom:calc(160px + env(safe-area-inset-bottom)); left:0; right:0;
+  /* Swipe tutorial — animated finger swiping up, with label, title state only */
+  #tut {
+    position:fixed; left:50%; bottom:30%; z-index:5;
+    width:0; height:0; pointer-events:none;
+    opacity:0; transition:opacity .4s;
+  }
+  #tut.show { opacity:1; }
+  #tut .ttrail {
+    position:absolute; left:-5px; bottom:14px;
+    width:10px; height:0; border-radius:999px;
+    background:linear-gradient(to top, rgba(255,255,255,0), rgba(255,255,255,.85));
+    animation:ttrail 1.7s ease-in-out infinite;
+  }
+  #tut .tdot {
+    position:absolute; left:-14px; bottom:0;
+    width:28px; height:28px; border-radius:50%;
+    background:rgba(255,255,255,.95); border:3px solid var(--ink);
+    box-shadow:0 0 14px rgba(255,255,255,.55);
+    animation:tswipe 1.7s ease-in-out infinite;
+  }
+  #tut .tlabel {
+    position:absolute; left:-150px; top:26px; width:300px;
     text-align:center; color:#fff;
     font-family:var(--comic); font-size:22px;
     text-shadow:2px 2px 0 rgba(21,17,14,.55);
-    opacity:0; transition:opacity .4s;
     letter-spacing:.04em;
   }
-  #hint.show { opacity:1; animation:pulse 1.6s ease-in-out infinite; }
-  @keyframes pulse {
-    0%,100%{ transform:translateY(0); }
-    50%{ transform:translateY(-6px); }
+  @keyframes tswipe {
+    0%        { transform:translateY(0); opacity:0; }
+    12%       { opacity:1; }
+    58%       { transform:translateY(-90px); opacity:1; }
+    72%, 100% { transform:translateY(-90px); opacity:0; }
+  }
+  @keyframes ttrail {
+    0%, 8%    { height:0; opacity:0; }
+    18%       { opacity:.9; }
+    58%       { height:86px; opacity:.9; }
+    72%, 100% { height:86px; opacity:0; }
+  }
+
+  /* Finger trail overlay — echoes the swipe back at the player */
+  #trail {
+    position:fixed; inset:0; z-index:4; pointer-events:none;
   }
 
   #over {
@@ -135,7 +166,22 @@
   #over #revive.broke { background:#cfc8bc; color:#8a8175; cursor:default; }
   #over #revive .px { font-size:16px; opacity:.92; }
 
-  /* On-screen D-pad — bottom-left, keeps the view clear of the thumb */
+  /* D-pad visibility switch — bottom-left round button */
+  #padToggle {
+    position:fixed; left:14px; bottom:calc(18px + env(safe-area-inset-bottom)); z-index:6;
+    width:46px; height:46px; border-radius:50%; padding:0;
+    background:rgba(255,247,230,.75); border:3px solid var(--ink);
+    box-shadow:3px 3px 0 var(--ink); cursor:pointer; pointer-events:auto;
+    display:flex; align-items:center; justify-content:center;
+    -webkit-tap-highlight-color:transparent; touch-action:manipulation;
+  }
+  #padToggle svg { width:24px; height:24px; display:block; pointer-events:none; }
+  #padToggle svg path { fill:#9b8e80; }
+  #padToggle.on { background:var(--yellow); }
+  #padToggle.on svg path { fill:var(--ink); }
+  #padToggle:active { transform:translate(2px,2px); box-shadow:1px 1px 0 var(--ink); }
+
+  /* On-screen D-pad — bottom center, off by default (toggle to show) */
   #dpad {
     position:fixed; z-index:6; pointer-events:none;
     left:50%; transform:translateX(-50%);
@@ -327,7 +373,12 @@
   <div id="wordmark" class="hud">BLOCK HOP</div>
   <div id="dist" class="hud"><span class="lbl">DISTANCE</span><span id="distN">0</span></div>
   <div id="coin" class="hud"><span class="c">$</span><span id="coinN">0</span></div>
-  <div id="hint" class="hud">Tap to hop</div>
+  <canvas id="trail"></canvas>
+  <div id="tut" class="hud">
+    <div class="ttrail"></div>
+    <div class="tdot"></div>
+    <div class="tlabel">Swipe to move &middot; tap to hop</div>
+  </div>
   <button id="rosterBtn">CHARACTERS</button>
   <div id="lb"></div>
   <div id="lbFull">
@@ -337,7 +388,8 @@
       <button id="lbClose">CLOSE</button>
     </div>
   </div>
-  <div id="dpad">
+  <button id="padToggle" aria-label="Toggle on-screen buttons"><svg viewBox="0 0 24 24"><path d="M9 3 h6 v6 h6 v6 h-6 v6 H9 v-6 H3 V9 h6 Z"/></svg></button>
+  <div id="dpad" class="hidden">
     <button id="bUp" aria-label="Forward"><svg viewBox="0 0 24 24"><polygon points="12,4 21,20 3,20"/></svg></button>
     <button id="bLeft" aria-label="Left"><svg viewBox="0 0 24 24"><polygon points="4,12 20,3 20,21"/></svg></button>
     <button id="bRight" aria-label="Right"><svg viewBox="0 0 24 24"><polygon points="20,12 4,3 4,21"/></svg></button>
@@ -384,7 +436,7 @@ const coinEl = $('#coinN');
 const overEl = $('#over');
 const wordmarkEl = $('#wordmark');
 const distBoxEl = $('#dist');
-const hintEl = $('#hint');
+const hintEl = $('#tut');
 const reviveBtn = $('#revive');
 const reviveCostEl = $('#reviveCost');
 const rosterBtnEl = $('#rosterBtn');
@@ -443,7 +495,7 @@ const hud = {
 
 const api = startGame({ canvas, hud });
 
-// On-screen D-pad — forward / left / right (canvas tap & swipe still work too)
+// On-screen D-pad — opt-in via the bottom-left switch (swipe is the primary input)
 function bindHop(sel, dx, dz){
   $(sel).addEventListener('pointerdown', (e) => {
     e.preventDefault(); e.stopPropagation();
@@ -454,6 +506,68 @@ bindHop('#bUp', 0, 1);
 bindHop('#bLeft', -1, 0);
 bindHop('#bRight', 1, 0);
 bindHop('#bDown', 0, -1);
+
+const padEl = $('#dpad');
+const padToggleEl = $('#padToggle');
+function setPad(on){
+  padEl.classList.toggle('hidden', !on);
+  padToggleEl.classList.toggle('on', on);
+  try { localStorage.setItem('bh_pad', on ? '1' : '0'); } catch (e) {}
+}
+setPad(localStorage.getItem('bh_pad') === '1');
+padToggleEl.addEventListener('click', () => setPad(padEl.classList.contains('hidden')));
+
+// ── Finger trail — echo every drag/tap so swiping reads as the native input ──
+const trailC = $('#trail');
+const trailX = trailC.getContext('2d');
+let trailPts = [];
+let trailDown = false;
+let trailDirty = false;
+function trailSize(){
+  const d = Math.min(window.devicePixelRatio || 1, 2);
+  trailC.width = Math.round(innerWidth * d);
+  trailC.height = Math.round(innerHeight * d);
+  trailX.setTransform(d, 0, 0, d, 0, 0);
+}
+trailSize();
+addEventListener('resize', trailSize);
+addEventListener('pointerdown', (e) => {
+  trailDown = true;
+  trailPts.push({ x: e.clientX, y: e.clientY, t: performance.now() });
+}, { passive: true });
+addEventListener('pointermove', (e) => {
+  if (trailDown) trailPts.push({ x: e.clientX, y: e.clientY, t: performance.now() });
+}, { passive: true });
+addEventListener('pointerup', () => { trailDown = false; }, { passive: true });
+addEventListener('pointercancel', () => { trailDown = false; }, { passive: true });
+const TRAIL_MS = 380;
+(function trailLoop(){
+  requestAnimationFrame(trailLoop);
+  if (!trailPts.length){
+    if (trailDirty){ trailX.clearRect(0, 0, innerWidth, innerHeight); trailDirty = false; }
+    return;
+  }
+  const now = performance.now();
+  trailPts = trailPts.filter((p) => now - p.t < TRAIL_MS);
+  trailX.clearRect(0, 0, innerWidth, innerHeight);
+  trailDirty = true;
+  trailX.lineCap = 'round';
+  trailX.lineJoin = 'round';
+  for (let i = 1; i < trailPts.length; i++){
+    const a = trailPts[i - 1], b = trailPts[i];
+    const k = 1 - (now - b.t) / TRAIL_MS;
+    trailX.strokeStyle = 'rgba(255,255,255,' + (k * 0.8).toFixed(3) + ')';
+    trailX.lineWidth = 12 * k + 2;
+    trailX.beginPath(); trailX.moveTo(a.x, a.y); trailX.lineTo(b.x, b.y); trailX.stroke();
+  }
+  // Lone point (a tap, no drag): show a fading touch dot instead of a stroke
+  if (trailPts.length === 1){
+    const p = trailPts[0];
+    const k = 1 - (now - p.t) / TRAIL_MS;
+    trailX.fillStyle = 'rgba(255,255,255,' + (k * 0.7).toFixed(3) + ')';
+    trailX.beginPath(); trailX.arc(p.x, p.y, 8 + 10 * (1 - k), 0, Math.PI * 2); trailX.fill();
+  }
+})();
 
 $('#again').addEventListener('click', () => api.restart());
 
