@@ -24,9 +24,12 @@ let sun, sunTarget, ambient, fill;
 let matHead, matTail;           // shared emissive vehicle-lamp materials (glow at night)
 let dayT = 0;                   // seconds into the day/night cycle
 const DAY_CYCLE = 80;           // seconds for one full day→night loop
-const SKY_DAY = new THREE.Color(0xb8d7ea), SKY_NIGHT = new THREE.Color(0x0e1430);
-const SUN_DAY = new THREE.Color(0xfff4d6), SUN_NIGHT = new THREE.Color(0x3a4a7a);
-const _dnSky = new THREE.Color(), _dnSun = new THREE.Color();
+const SKY_DAY = new THREE.Color(0xaed0e6), SKY_NIGHT = new THREE.Color(0x0e1430);
+const SKY_DAWN = new THREE.Color(0xf3a878), SKY_DUSK = new THREE.Color(0xe9714a);  // horizon glow
+const SUN_DAY = new THREE.Color(0xfff4d6), SUN_NIGHT = new THREE.Color(0x46568a);
+const SUN_DAWN = new THREE.Color(0xffc08a), SUN_DUSK = new THREE.Color(0xff8a3c);  // golden hour
+const AMB_DAY = new THREE.Color(0xfdfbf4), AMB_NIGHT = new THREE.Color(0x34425e), AMB_WARM = new THREE.Color(0xffc6a0);
+const _dnSky = new THREE.Color(), _dnSun = new THREE.Color(), _dnAmb = new THREE.Color();
 let lanesByGz = new Map();      // gz → laneRecord
 let furthestAhead = -Infinity;  // largest gz that has a lane
 let furthestBehind = Infinity;  // smallest gz that has a lane
@@ -404,7 +407,7 @@ function addLane(gz){
 
   // Lane tile geometry — top "skin" (grass/asphalt/water/wood) thin slab,
   // plus a thick dirt slab below to give the offscreen edge a cliff/cross-section look.
-  const tileMat   = laneTileMat(kind);
+  const tileMat   = laneTileMat(kind, gz);
   const baseHeight = kind === 'river' ? 0.10 : 0.20;
   const topY       = kind === 'river' ? -0.08 : 0.20;   // y of top surface
   const W          = 2 * KILL_X + 4;
@@ -497,32 +500,36 @@ function buildStrata(lane, kind, W, topYin){
 
 function buryDetails(lane, topYin){
   const gz = lane.gz;
-  const frontZ = wZ(gz) + TILE / 2;     // +Z cliff face that points at the camera
-  const r0 = Math.random();
-  const n = r0 < 0.45 ? 0 : (r0 < 0.80 ? 1 : 2);
+  // The cliff face that points at the camera. Details poke OUT past it (toward
+  // +Z) so they read clearly when this lane scrolls to the screen edge; while
+  // buried mid-field they're hidden inside the next lane, which is correct.
+  const frontZ = wZ(gz) + TILE / 2;
+  const n = 1 + (Math.random() < 0.7 ? 1 : 0) + (Math.random() < 0.4 ? 1 : 0);  // 1–3
   for (let i = 0; i < n; i++){
-    const x = (Math.random() * 2 - 1) * 3.2;
+    const x = (Math.random() * 2 - 1) * 2.8;
     const r = Math.random();
-    if (r < 0.40){
-      // bleached buried bones — skull + a few ribs
-      const y = topYin - (1.05 + Math.random() * 1.1);
-      const bone = 0xe8e0cf;
-      lane.group.add(ball(0.15, bone, x, y, frontZ));
-      lane.group.add(box(0.05, 0.05, 0.04, 0x2a2520, x - 0.05, y + 0.02, frontZ + 0.12));  // eye socket
-      lane.group.add(box(0.05, 0.05, 0.04, 0x2a2520, x + 0.05, y + 0.02, frontZ + 0.12));
-      for (let k = 0; k < 3; k++)
-        lane.group.add(box(0.26, 0.045, 0.05, bone, x + 0.30 + k * 0.015, y - 0.16 - k * 0.11, frontZ - 0.02));
-    } else if (r < 0.72){
-      // embedded boulder, half-exposed on the face
-      const y = topYin - (1.35 + Math.random() * 1.0);
-      lane.group.add(ball(0.26 + Math.random() * 0.12, pick(ROCK_COLS), x, y, frontZ - 0.06, 0));
+    if (r < 0.38){
+      // bleached buried bones — skull + ribcage, proud of the face
+      const y = topYin - (0.55 + Math.random() * 1.0);
+      const bone = 0xeae2d0;
+      lane.group.add(ball(0.21, bone, x, y, frontZ + 0.05));
+      lane.group.add(box(0.06, 0.06, 0.05, 0x241f1a, x - 0.07, y + 0.02, frontZ + 0.22));  // eye socket
+      lane.group.add(box(0.06, 0.06, 0.05, 0x241f1a, x + 0.07, y + 0.02, frontZ + 0.22));
+      lane.group.add(box(0.10, 0.07, 0.05, bone, x, y - 0.16, frontZ + 0.20));             // jaw
+      for (let k = 0; k < 4; k++)
+        lane.group.add(box(0.40, 0.06, 0.07, bone, x + 0.42 + k * 0.02, y - 0.20 - k * 0.14, frontZ + 0.06));  // ribs
+    } else if (r < 0.70){
+      // embedded boulder, clearly half-exposed
+      const y = topYin - (0.6 + Math.random() * 1.1);
+      const rad = 0.34 + Math.random() * 0.16;
+      lane.group.add(ball(rad, pick(ROCK_COLS), x, y, frontZ + rad * 0.35, 0));
     } else {
       // old buried pipe, hollow cross-section toward camera
-      const y = topYin - (0.65 + Math.random() * 0.9);
-      const pipe = cyl(0.13, 0.13, 0.5, 8, 0x7a4a2c, x, y, frontZ - 0.06);
+      const y = topYin - (0.5 + Math.random() * 1.0);
+      const pipe = cyl(0.17, 0.17, 0.55, 8, 0x8a5230, x, y, frontZ + 0.1);
       pipe.rotation.x = Math.PI / 2;    // axis along Z → round end faces the camera
       lane.group.add(pipe);
-      const hole = cyl(0.085, 0.085, 0.06, 8, 0x241a10, x, y, frontZ + 0.02);
+      const hole = cyl(0.11, 0.11, 0.08, 8, 0x241a10, x, y, frontZ + 0.34);
       hole.rotation.x = Math.PI / 2;
       lane.group.add(hole);
     }
@@ -536,8 +543,10 @@ function mat(hex){
     new THREE.MeshStandardMaterial({ color: hex, roughness: 0.95, metalness: 0, flatShading: true }));
   return matCache.get(hex);
 }
-function laneTileMat(kind){
-  if (kind === 'grass') return mat(0x6fc85a);
+function laneTileMat(kind, gz){
+  // Grass alternates two muted, slightly desaturated greens per row — the
+  // manicured-lawn stripe reads more refined than a single neon slab.
+  if (kind === 'grass') return mat((gz & 1) ? 0x6fa64f : 0x7cb35c);
   if (kind === 'road')  return mat(0x3a3a40);
   if (kind === 'river') return mat(0x4a9fd6);
   if (kind === 'rail')  return mat(0x826344);
@@ -1292,17 +1301,30 @@ function updateDayNight(dt){
   const day = THREE.MathUtils.smoothstep(sunHeight, -0.28, 0.28);  // 0 night → 1 day
   const night = 1 - day;
 
+  // Golden-hour glow peaks when the sun is near the horizon (sunrise & sunset).
+  const horizon = Math.max(0, 1 - Math.abs(sunHeight) / 0.5);
+  const rising  = Math.cos(ph * Math.PI * 2) > 0;   // sunrise side vs sunset side
+
   // Light levels
   sun.intensity     = 0.12 + 1.00 * day;
   ambient.intensity = 0.16 + 0.42 * day;
   fill.intensity    = 0.08 + 0.22 * day;
 
-  // Colours
+  // Sky + fog: night→day base, then push toward warm horizon colour at dawn/dusk
   _dnSky.copy(SKY_NIGHT).lerp(SKY_DAY, day);
+  _dnSky.lerp(rising ? SKY_DAWN : SKY_DUSK, horizon * 0.78);
   scene.background.copy(_dnSky);
   scene.fog.color.copy(_dnSky);
+
+  // Sun colour: cool night → neutral-warm day → strong golden at the horizon
   _dnSun.copy(SUN_NIGHT).lerp(SUN_DAY, day);
+  _dnSun.lerp(rising ? SUN_DAWN : SUN_DUSK, horizon * 0.85);
   sun.color.copy(_dnSun);
+
+  // Ambient colour: blue night → white day → warm at golden hour
+  _dnAmb.copy(AMB_NIGHT).lerp(AMB_DAY, day);
+  _dnAmb.lerp(AMB_WARM, horizon * 0.55);
+  ambient.color.copy(_dnAmb);
 
   // Sun position: orbit around the player so the shadow direction sweeps.
   const az = ph * Math.PI * 2;
