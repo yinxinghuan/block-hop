@@ -546,7 +546,7 @@ function mat(hex){
 function laneTileMat(kind, gz){
   // Grass alternates two muted, slightly desaturated greens per row — the
   // manicured-lawn stripe reads more refined than a single neon slab.
-  if (kind === 'grass') return mat((gz & 1) ? 0x6fa64f : 0x7cb35c);
+  if (kind === 'grass') return mat((gz & 1) ? 0x93b34e : 0xa3c25a);
   if (kind === 'road')  return mat(0x3a3a40);
   if (kind === 'river') return mat(0x4a9fd6);
   if (kind === 'rail')  return mat(0x826344);
