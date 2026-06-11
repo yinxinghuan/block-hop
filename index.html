@@ -68,7 +68,7 @@
   }
 
   #hint {
-    bottom:46px; left:0; right:0;
+    bottom:calc(160px + env(safe-area-inset-bottom)); left:0; right:0;
     text-align:center; color:#fff;
     font-family:var(--comic); font-size:22px;
     text-shadow:2px 2px 0 rgba(21,17,14,.55);
@@ -116,7 +116,8 @@
   #over .row .v { font-variant-numeric:tabular-nums; }
   #over .row.best .v { color:var(--red); }
   #over button {
-    margin-top:14px; padding:12px 26px; border:3px solid var(--ink);
+    display:block; margin:14px auto 0;
+    padding:12px 26px; border:3px solid var(--ink);
     background:var(--yellow); color:var(--ink);
     font-family:var(--comic); font-size:26px; letter-spacing:.04em;
     border-radius:999px; box-shadow:4px 4px 0 var(--ink); cursor:pointer;
@@ -130,7 +131,7 @@
     -webkit-text-stroke:1px var(--ink); paint-order:stroke fill;
     display:none;
   }
-  #over #revive.show { display:inline-block; }
+  #over #revive.show { display:block; }
   #over #revive.broke { background:#cfc8bc; color:#8a8175; cursor:default; }
   #over #revive .px { font-size:16px; opacity:.92; }
 
@@ -151,9 +152,10 @@
     border:3px solid var(--ink); border-radius:14px;
     background:rgba(255,247,230,.92); color:var(--ink);
     box-shadow:3px 3px 0 var(--ink);
-    font-family:var(--comic); font-size:28px; line-height:1;
     display:flex; align-items:center; justify-content:center;
   }
+  #dpad button svg { width:24px; height:24px; pointer-events:none; display:block; }
+  #dpad button svg polygon { fill:var(--ink); }
   #dpad button:active { transform:translate(2px,2px); box-shadow:1px 1px 0 var(--ink); }
   #bUp    { grid-column:2; grid-row:1; }
   #bLeft  { grid-column:1; grid-row:2; }
@@ -174,7 +176,7 @@
   /* Roster link on the death card */
   #over #rosterCard {
     background:none; box-shadow:none; border:none; color:#8a7d72;
-    font-size:18px; margin-top:6px; padding:4px;
+    font-size:18px; margin:8px auto 0; padding:4px;
     text-decoration:underline; text-underline-offset:3px;
   }
   #over #rosterCard:active { transform:none; }
@@ -246,9 +248,9 @@
   <div id="hint" class="hud">Tap to hop</div>
   <button id="rosterBtn">CHARACTERS</button>
   <div id="dpad">
-    <button id="bUp" aria-label="Forward">&#9650;</button>
-    <button id="bLeft" aria-label="Left">&#9664;</button>
-    <button id="bRight" aria-label="Right">&#9654;</button>
+    <button id="bUp" aria-label="Forward"><svg viewBox="0 0 24 24"><polygon points="12,4 21,20 3,20"/></svg></button>
+    <button id="bLeft" aria-label="Left"><svg viewBox="0 0 24 24"><polygon points="4,12 20,3 20,21"/></svg></button>
+    <button id="bRight" aria-label="Right"><svg viewBox="0 0 24 24"><polygon points="20,12 4,3 4,21"/></svg></button>
   </div>
 </div>
 
