@@ -364,7 +364,8 @@ export function startGame(opts){
   hud.setReady(true);
   requestAnimationFrame(tick);
 
-  return { restart, revive, reviveInfo, getCoins, getRoster, unlock: unlockChar, thumb: makeThumb };
+  return { restart, revive, reviveInfo, getCoins, getRoster, unlock: unlockChar, thumb: makeThumb,
+           hop: (dx, dz) => { initAudio(); tryHop(dx, dz); } };
 }
 
 function buildPlayer(charKey){

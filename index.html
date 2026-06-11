@@ -89,16 +89,18 @@
   }
   #over.show { display:flex; }
   #over .card {
+    box-sizing:border-box;
     background:var(--paper); color:var(--ink);
-    padding:28px 32px 22px; border-radius:8px;
+    padding:24px 22px 20px; border-radius:8px;
     border:4px solid var(--ink); box-shadow:6px 6px 0 var(--ink);
     text-align:center; max-width:340px; width:100%;
     transform:rotate(-1deg);
   }
   #over h1 {
-    font-family:var(--pow); font-size:52px; color:var(--red);
+    font-family:var(--pow); font-size:clamp(38px,13vw,52px); color:var(--red);
     -webkit-text-stroke:3px var(--ink); paint-order:stroke fill;
     margin:0 0 4px; letter-spacing:.02em; transform:rotate(2deg);
+    white-space:nowrap;
   }
   #over .reason {
     font-family:var(--comic); font-size:20px; color:var(--ink);
@@ -131,6 +133,31 @@
   #over #revive.show { display:inline-block; }
   #over #revive.broke { background:#cfc8bc; color:#8a8175; cursor:default; }
   #over #revive .px { font-size:16px; opacity:.92; }
+
+  /* On-screen D-pad — bottom-left, keeps the view clear of the thumb */
+  #dpad {
+    position:fixed; z-index:6; pointer-events:none;
+    left:calc(16px + env(safe-area-inset-left));
+    bottom:calc(22px + env(safe-area-inset-bottom));
+    display:grid;
+    grid-template-columns:repeat(3, 54px);
+    grid-template-rows:repeat(2, 54px);
+    gap:8px;
+  }
+  #dpad.hidden { display:none; }
+  #dpad button {
+    pointer-events:auto; padding:0; cursor:pointer;
+    -webkit-tap-highlight-color:transparent; touch-action:manipulation;
+    border:3px solid var(--ink); border-radius:14px;
+    background:rgba(255,247,230,.92); color:var(--ink);
+    box-shadow:3px 3px 0 var(--ink);
+    font-family:var(--comic); font-size:28px; line-height:1;
+    display:flex; align-items:center; justify-content:center;
+  }
+  #dpad button:active { transform:translate(2px,2px); box-shadow:1px 1px 0 var(--ink); }
+  #bUp    { grid-column:2; grid-row:1; }
+  #bLeft  { grid-column:1; grid-row:2; }
+  #bRight { grid-column:3; grid-row:2; }
 
   /* Roster open button — top-right pill */
   #rosterBtn {
@@ -218,6 +245,11 @@
   <div id="coin" class="hud"><span class="c">$</span><span id="coinN">0</span></div>
   <div id="hint" class="hud">Tap to hop</div>
   <button id="rosterBtn">CHARACTERS</button>
+  <div id="dpad">
+    <button id="bUp" aria-label="Forward">&#9650;</button>
+    <button id="bLeft" aria-label="Left">&#9664;</button>
+    <button id="bRight" aria-label="Right">&#9654;</button>
+  </div>
 </div>
 
 <div id="over">
@@ -316,6 +348,17 @@ const hud = {
 };
 
 const api = startGame({ canvas, hud });
+
+// On-screen D-pad — forward / left / right (canvas tap & swipe still work too)
+function bindHop(sel, dx, dz){
+  $(sel).addEventListener('pointerdown', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    api.hop(dx, dz);
+  });
+}
+bindHop('#bUp', 0, 1);
+bindHop('#bLeft', -1, 0);
+bindHop('#bRight', 1, 0);
 
 $('#again').addEventListener('click', () => api.restart());
 
