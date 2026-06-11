@@ -81,7 +81,8 @@
     animation:ttrail 1.7s ease-in-out infinite;
   }
   #tut .tdot {
-    position:absolute; left:-14px; bottom:0;
+    /* 28px content + 3px border each side = 34px visual; -17px centers it on the streak */
+    position:absolute; left:-17px; bottom:0;
     width:28px; height:28px; border-radius:50%;
     background:rgba(255,255,255,.95); border:3px solid var(--ink);
     box-shadow:0 0 14px rgba(255,255,255,.55);
@@ -107,9 +108,13 @@
     72%, 100% { height:86px; opacity:0; }
   }
 
-  /* Finger trail overlay — echoes the swipe back at the player */
+  /* Finger trail overlay — echoes the swipe back at the player.
+     width/height 100% is load-bearing: a replaced element with inset:0 does
+     NOT stretch, so on dpr>1 phones the bitmap would render at 2x size and
+     every stroke would land at doubled coordinates (off-screen). */
   #trail {
-    position:fixed; inset:0; z-index:4; pointer-events:none;
+    position:fixed; inset:0; width:100%; height:100%;
+    z-index:4; pointer-events:none;
   }
 
   #over {
@@ -175,10 +180,10 @@
     display:flex; align-items:center; justify-content:center;
     -webkit-tap-highlight-color:transparent; touch-action:manipulation;
   }
-  #padToggle svg { width:24px; height:24px; display:block; pointer-events:none; }
-  #padToggle svg path { fill:#9b8e80; }
+  #padToggle svg { width:26px; height:26px; display:block; pointer-events:none; }
+  #padToggle svg polygon { fill:#9b8e80; }
   #padToggle.on { background:var(--yellow); }
-  #padToggle.on svg path { fill:var(--ink); }
+  #padToggle.on svg polygon { fill:var(--ink); }
   #padToggle:active { transform:translate(2px,2px); box-shadow:1px 1px 0 var(--ink); }
 
   /* On-screen D-pad — bottom center, off by default (toggle to show) */
@@ -388,7 +393,12 @@
       <button id="lbClose">CLOSE</button>
     </div>
   </div>
-  <button id="padToggle" aria-label="Toggle on-screen buttons"><svg viewBox="0 0 24 24"><path d="M9 3 h6 v6 h6 v6 h-6 v6 H9 v-6 H3 V9 h6 Z"/></svg></button>
+  <button id="padToggle" aria-label="Toggle on-screen buttons"><svg viewBox="0 0 24 24">
+    <polygon points="12,1.5 15.8,6.5 8.2,6.5"/>
+    <polygon points="12,22.5 15.8,17.5 8.2,17.5"/>
+    <polygon points="1.5,12 6.5,8.2 6.5,15.8"/>
+    <polygon points="22.5,12 17.5,8.2 17.5,15.8"/>
+  </svg></button>
   <div id="dpad" class="hidden">
     <button id="bUp" aria-label="Forward"><svg viewBox="0 0 24 24"><polygon points="12,4 21,20 3,20"/></svg></button>
     <button id="bLeft" aria-label="Left"><svg viewBox="0 0 24 24"><polygon points="4,12 20,3 20,21"/></svg></button>
