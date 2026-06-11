@@ -336,6 +336,7 @@ export function startGame(opts){
 
   // Particle FX layer
   fxInit();
+  initWeather();
 
   // Build player (random character each run)
   buildPlayer(pickChar());
@@ -1366,6 +1367,7 @@ function tick(){
 
   // Day/night cycle — sweeps light colour, intensity, sun angle + headlights
   updateDayNight(dt);
+  updateWeather(dt);
   sunTarget.position.set(player.worldX, 0, wZ(player.gz));
 
   renderer.render(scene, camera);
@@ -1375,7 +1377,13 @@ function tick(){
 // shadows sweep), sky + fog tint, and vehicle headlight glow after dark.
 function updateDayNight(dt){
   dayT += dt;
-  const ph = (dayT % DAY_CYCLE) / DAY_CYCLE;          // 0..1 around the clock
+  // Warp the clock so daylight (sun above horizon, first half of the sine)
+  // takes DAY_FRAC of real time and night only the remainder.
+  const DAY_FRAC = 0.68;
+  const u = (dayT % DAY_CYCLE) / DAY_CYCLE;
+  const ph = u < DAY_FRAC
+    ? (u / DAY_FRAC) * 0.5
+    : 0.5 + ((u - DAY_FRAC) / (1 - DAY_FRAC)) * 0.5;   // 0..1 around the clock
   const sunHeight = Math.sin(ph * Math.PI * 2);        // -1 (deep night) .. 1 (noon)
   const day = THREE.MathUtils.smoothstep(sunHeight, -0.28, 0.28);  // 0 night → 1 day
   const night = 1 - day;
@@ -1413,6 +1421,107 @@ function updateDayNight(dt){
   // Headlights glow once it gets dark
   matHead.emissiveIntensity = night * 1.5;
   matTail.emissiveIntensity = night * 1.1;
+}
+
+// ── Weather: passing spells of rain / snow / fog with smooth fades ───────────
+const FOG_NEAR = 28, FOG_FAR = 44;                  // clear-sky baseline (matches init)
+const OVERCAST = new THREE.Color(0xb4bcc6);
+const wRand = (a, b) => a + Math.random() * (b - a);
+let weather, rainGeo, rainMat, rainLines, rainDrops, snowGeo, snowMat, snowPts, snowFlakes;
+
+function initWeather(){
+  weather = { kind: 'clear', t: 0, dur: wRand(10, 20), fade: 0 };
+
+  // Rain — slanted line streaks inside a volume that follows the player
+  const N_RAIN = 220;
+  rainDrops = [];
+  for (let i = 0; i < N_RAIN; i++) rainDrops.push({ x: wRand(-9, 9), y: wRand(0, 11), z: wRand(-9, 9), s: wRand(13, 18) });
+  rainGeo = new THREE.BufferGeometry();
+  rainGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N_RAIN * 6), 3));
+  rainMat = new THREE.LineBasicMaterial({ color: 0xa8c4e0, transparent: true, opacity: 0 });
+  rainLines = new THREE.LineSegments(rainGeo, rainMat);
+  rainLines.visible = false; rainLines.frustumCulled = false;
+  scene.add(rainLines);
+
+  // Snow — slow drifting points with per-flake sway
+  const N_SNOW = 240;
+  snowFlakes = [];
+  for (let i = 0; i < N_SNOW; i++) snowFlakes.push({ x: wRand(-9, 9), y: wRand(0, 11), z: wRand(-9, 9), s: wRand(0.8, 1.5), ph: wRand(0, Math.PI * 2) });
+  snowGeo = new THREE.BufferGeometry();
+  snowGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N_SNOW * 3), 3));
+  // sizeAttenuation off: with an orthographic camera it shrinks points to sub-pixel
+  snowMat = new THREE.PointsMaterial({ color: 0xffffff, size: 5, transparent: true, opacity: 0, sizeAttenuation: false });
+  snowPts = new THREE.Points(snowGeo, snowMat);
+  snowPts.visible = false; snowPts.frustumCulled = false;
+  scene.add(snowPts);
+}
+
+function pickWeather(){
+  const r = Math.random();
+  if (r < 0.45) return 'clear';
+  if (r < 0.66) return 'rain';
+  if (r < 0.85) return 'snow';
+  return 'fog';
+}
+
+// Runs right after updateDayNight each frame, modulating the colours and
+// light levels it just set — never storing them, so the two stay independent.
+function updateWeather(dt){
+  weather.t += dt;
+  const FADE = 3;
+  weather.fade = Math.max(0, Math.min(1, weather.t / FADE, (weather.dur - weather.t) / FADE));
+  if (weather.t >= weather.dur){
+    let next = pickWeather();
+    if (next === weather.kind) next = 'clear';     // no repeats → guaranteed clear breaks
+    weather = { kind: next, t: 0, dur: next === 'clear' ? wRand(16, 32) : wRand(14, 26), fade: 0 };
+  }
+  const k = weather.kind, f = weather.fade;
+  const px = player.worldX, pz = wZ(player.gz);
+
+  // Overcast: grey the sky and dim the sun while a spell is active
+  const ov = (k === 'rain' ? 0.55 : k === 'fog' ? 0.65 : k === 'snow' ? 0.35 : 0) * f;
+  if (ov > 0){
+    scene.background.lerp(OVERCAST, ov);
+    scene.fog.color.lerp(OVERCAST, ov);
+    sun.intensity *= 1 - 0.45 * ov;
+  }
+  // Fog distance squeeze — strongest for fog, a light haze for rain/snow.
+  // Camera sits ~18 units from the player, so near must stay above ~15 or
+  // the player themself disappears into the murk.
+  const fogF = (k === 'fog' ? 1 : k === 'rain' ? 0.3 : k === 'snow' ? 0.25 : 0) * f;
+  scene.fog.near = FOG_NEAR - (FOG_NEAR - 16) * fogF;
+  scene.fog.far  = FOG_FAR  - (FOG_FAR - 27) * fogF;
+
+  if (k === 'rain' && f > 0){
+    rainLines.visible = true;
+    rainMat.opacity = 0.55 * f;
+    const a = rainGeo.attributes.position.array;
+    for (let i = 0; i < rainDrops.length; i++){
+      const d = rainDrops[i];
+      d.y -= d.s * dt; d.x -= 2.5 * dt;
+      if (d.y < 0){ d.y += 11; d.x = wRand(-9, 9); d.z = wRand(-9, 9); }
+      const j = i * 6, wx = px + d.x, wz2 = pz + d.z;
+      a[j] = wx;          a[j+1] = d.y;        a[j+2] = wz2;
+      a[j+3] = wx + 0.07; a[j+4] = d.y + 0.5;  a[j+5] = wz2;
+    }
+    rainGeo.attributes.position.needsUpdate = true;
+  } else rainLines.visible = false;
+
+  if (k === 'snow' && f > 0){
+    snowPts.visible = true;
+    snowMat.opacity = 0.9 * f;
+    const a = snowGeo.attributes.position.array;
+    const tNow = performance.now() * 0.001;
+    for (let i = 0; i < snowFlakes.length; i++){
+      const d = snowFlakes[i];
+      d.y -= d.s * dt;
+      if (d.y < 0){ d.y += 11; d.x = wRand(-9, 9); d.z = wRand(-9, 9); }
+      a[i*3]   = px + d.x + Math.sin(tNow * 1.3 + d.ph) * 0.6;
+      a[i*3+1] = d.y;
+      a[i*3+2] = pz + d.z + Math.cos(tNow * 1.1 + d.ph) * 0.4;
+    }
+    snowGeo.attributes.position.needsUpdate = true;
+  } else snowPts.visible = false;
 }
 
 function onLand(){
@@ -1680,4 +1789,5 @@ function lerpAngle(a, b, t){
 }
 
 // expose for debug
-window.__bh = { player, lanesByGz, get state(){ return { runDistance, coins, started, dead: player.dead }; } };
+window.__bh = { player, lanesByGz, get state(){ return { runDistance, coins, started, dead: player.dead }; },
+                setWeather(k){ weather = { kind: k, t: 3, dur: 9999, fade: 1 }; } };
