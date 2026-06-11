@@ -1277,14 +1277,14 @@ function tick(){
     // stretch at the apex, arms & legs lift on the way up.
     const t = performance.now() * 0.001;
     const air = Math.abs(Math.sin(t * 3.2));          // 0 = on the ground, 1 = apex, ~1s bounces
-    playerMesh.position.y = 0.24 * air;               // real little hop off the tile
-    playerMesh.scale.y = PLAYER_SCALE * (0.90 + 0.18 * air);   // squash low, stretch high
+    playerMesh.position.y = 0.13 * air;               // gentle little hop off the tile
+    playerMesh.scale.y = PLAYER_SCALE * (0.95 + 0.09 * air);   // squash low, stretch high
     if (playerRig && player.rigBase){
       const b = player.rigBase;
-      playerRig.armL.rotation.x = b.armL - 0.32 * air;
-      playerRig.armR.rotation.x = b.armR - 0.32 * air;
-      playerRig.legL.rotation.x = b.legL + 0.20 * air;
-      playerRig.legR.rotation.x = b.legR + 0.20 * air;
+      playerRig.armL.rotation.x = b.armL - 0.18 * air;
+      playerRig.armR.rotation.x = b.armR - 0.18 * air;
+      playerRig.legL.rotation.x = b.legL + 0.11 * air;
+      playerRig.legR.rotation.x = b.legR + 0.11 * air;
     }
   }
 
