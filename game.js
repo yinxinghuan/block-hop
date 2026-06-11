@@ -18,6 +18,8 @@ const SURFACE_Y    = 0.20;       // y of road/grass/rail top surface — vehicle
 
 // ── Globals ───────────────────────────────────────────────────────────────────
 let scene, camera, renderer, canvas;
+let clipL, clipR;               // vertical cut-planes at the L/R screen edges (clean cross-section exit)
+const _camRight = new THREE.Vector3();   // scratch — camera world right-vector, reused each frame
 let clock;
 let playerMesh, playerRig;
 let sun, sunTarget, ambient, fill;
@@ -306,6 +308,12 @@ export function startGame(opts){
   renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  // Global cut-planes: anything past the L/R screen edge is sliced flat instead of
+  // popping out whole. Normals/offsets are refreshed each frame in tick().
+  clipL = new THREE.Plane(new THREE.Vector3( 1, 0, 0), 0);
+  clipR = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
+  renderer.clippingPlanes = [clipL, clipR];
 
   // Ambient + warm key sun (real shadowMap) + cool fill.
   ambient = new THREE.AmbientLight(0xffffff, 0.55);
@@ -1277,14 +1285,14 @@ function tick(){
     // stretch at the apex, arms & legs lift on the way up.
     const t = performance.now() * 0.001;
     const air = Math.abs(Math.sin(t * 3.2));          // 0 = on the ground, 1 = apex, ~1s bounces
-    playerMesh.position.y = 0.13 * air;               // gentle little hop off the tile
-    playerMesh.scale.y = PLAYER_SCALE * (0.95 + 0.09 * air);   // squash low, stretch high
+    playerMesh.position.y = 0.06 * air;               // small hop, never dips below rest (y>=0)
+    playerMesh.scale.y = PLAYER_SCALE * (1 + 0.05 * air);   // stretch up only — never compress below rest, so feet stay put
     if (playerRig && player.rigBase){
       const b = player.rigBase;
-      playerRig.armL.rotation.x = b.armL - 0.18 * air;
-      playerRig.armR.rotation.x = b.armR - 0.18 * air;
-      playerRig.legL.rotation.x = b.legL + 0.11 * air;
-      playerRig.legR.rotation.x = b.legR + 0.11 * air;
+      playerRig.armL.rotation.x = b.armL - 0.14 * air;
+      playerRig.armR.rotation.x = b.armR - 0.14 * air;
+      playerRig.legL.rotation.x = b.legL;   // legs stay at rest so feet never swing under the ground
+      playerRig.legR.rotation.x = b.legR;
     }
   }
 
@@ -1353,6 +1361,16 @@ function tick(){
   camera.position.z = lerp(camera.position.z, targetCamZ, 6 * dt);
   camera.position.y = 14;
   camera.lookAt(player.worldX, 0, wZ(player.gz) - 0.5);
+
+  // Slide the cut-planes to the live screen edges. Aligning the plane normals to the
+  // camera's world right-vector (not world-X) keeps the slice flush with the edge
+  // despite the slight camera yaw, so models exit by being sheared, not vanishing.
+  camera.updateMatrixWorld();
+  const right = _camRight.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+  const halfW = camera.right;                       // ortho half-width = VIEW_H * aspect
+  const camDotRight = right.dot(camera.position);
+  clipL.normal.copy(right);                clipL.constant = -camDotRight + halfW;
+  clipR.normal.copy(right).multiplyScalar(-1); clipR.constant = camDotRight + halfW;
 
   // Day/night cycle — sweeps light colour, intensity, sun angle + headlights
   updateDayNight(dt);
