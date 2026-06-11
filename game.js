@@ -1275,7 +1275,7 @@ function tick(){
   } else if (!player.dead){
     // Idle breathing — gentle vertical bob, chest swell (feet planted) and a faint arm sway.
     const t = performance.now() * 0.001;
-    const breath = Math.sin(t * 3.0);                 // livelier ~2.1s cycle
+    const breath = Math.sin(t * 4.8);                 // livelier ~1.3s cycle
     const rise = 0.5 + 0.5 * breath;                  // 0..1
     playerMesh.position.y = 0.11 * rise;              // visible lift, never sinks into the tile
     playerMesh.scale.y = PLAYER_SCALE * (1 + 0.06 * breath);
