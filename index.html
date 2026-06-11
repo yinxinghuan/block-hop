@@ -494,7 +494,9 @@ function lbChampionPill(r, isMe){
   row.innerHTML = '<svg class="crown" viewBox="0 0 24 24"><path d="M3 18 L2 7 L8 12 L12 4 L16 12 L22 7 L21 18 Z"/></svg>';
   row.appendChild(lbAvatar(r));
   const nm = document.createElement('span');
-  nm.className = 'nm'; nm.textContent = isMe ? 'YOU' : (r.user_name || '?');
+  let name = (r.user_name || '?').trim();
+  if (name.length > 8) name = name.slice(0, 8) + '…';
+  nm.className = 'nm'; nm.textContent = isMe ? 'YOU' : name;
   row.appendChild(nm);
   const sc = document.createElement('span');
   sc.className = 'sc'; sc.textContent = String(Number(r.score) || 0);
