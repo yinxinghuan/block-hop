@@ -502,10 +502,15 @@ const hud = {
     reviveCostEl.textContent = String(info.cost);
     reviveBtn.classList.toggle('broke', !info.canAfford);
     overEl.classList.add('show');
+    trySendBeatNotify(payload.distance);
     setTimeout(refreshLB, 1200);   // pull the board again once the new score has landed
   },
   setReady(on){
     hintEl.classList.toggle('show', on !== false);
+    // Hide-hint = first hop happened = play started. Snapshot my pre-run best
+    // BEFORE the score from this run can land on the board, so the
+    // score_beat notify window (preRunBest, myScore] is accurate.
+    if (on === false) snapshotPreRunBest();
   },
 };
 
@@ -681,6 +686,53 @@ async function refreshLB(){
     renderLB(rows, String(A.telegramId));
   } catch (e) { /* keep whatever is shown */ }
 }
+
+// ── Leaderboard-beat 1:1 notify (score_beat) — see aigram-notify skill ────
+let preRunBest = 0;
+function snapshotPreRunBest(){
+  const A = window.Aigram;
+  const meId = A && String(A.telegramId);
+  if (meId && lbData.rows.length){
+    const me = lbData.rows.find(r => String(r.user_id) === meId);
+    preRunBest = me ? Number(me.score) || 0 : 0;
+  } else {
+    preRunBest = 0;
+  }
+}
+async function trySendBeatNotify(myScore){
+  const A = window.Aigram;
+  if (!A || !A.canRank || !A.telegramId) return;
+  if (myScore <= preRunBest) return;
+  try {
+    const res = await A.callAigramAPI(
+      '/note/aigram/ai/game/rank/score/list/by/session_id?session_id=' + A.gameUuid, 'GET');
+    const rows = Array.isArray(res) ? res : (res && res.data) || [];
+    const meId = String(A.telegramId);
+    const beaten = rows
+      .filter(r => String(r.user_id) !== meId)
+      .map(r => ({ id: String(r.user_id), score: Number(r.score) || 0 }))
+      .filter(r => r.score < myScore && r.score > preRunBest)
+      .sort((a, b) => b.score - a.score)[0];
+    if (!beaten) return;
+    A.postAigramAPI('/note/aigram/ai/game/record/play', {
+      session_id: A.gameUuid,
+      event: 'score_beat',
+      config_json: { actions: [{
+        type: 'notify',
+        target_user_id: beaten.id,
+        image: {
+          ref_url: 'https://yinxinghuan.github.io/games/posters/block-hop.png',
+          prompt: 'A voxel hero hopping across an isometric NYC street with yellow taxis and subway tracks.',
+        },
+        message: {
+          template: '{sender_name} just hopped past your record — ' + Math.round(myScore) + ' on Block Hop.',
+          variables: ['sender_name'],
+        },
+      }] },
+    });
+  } catch (e) { /* silent */ }
+}
+
 refreshLB();
 
 // ── Character roster overlay ──────────────────────────────────────────────────
