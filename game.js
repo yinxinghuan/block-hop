@@ -57,8 +57,8 @@ const STARTERS = [
   'shopkeeper', 'granny', 'oldman', 'blonde', 'kid', 'businessman', 'officeWoman',
   'student', 'darkWoman', 'worker', 'teen', 'fitWoman', 'chef', 'bigGuy',
 ];
-const ARCH_KEYS = ['cop', 'nurse', 'firefighter', 'construction', 'delivery', 'cowboy', 'punk', 'rapper', 'biker', 'goth'];
-const MONSTER_KEYS = ['vampire', 'werewolf', 'zombie', 'ghost', 'skeleton', 'mummy'];
+const ARCH_KEYS = ['cop', 'nurse', 'firefighter', 'construction', 'delivery', 'cowboy', 'punk', 'rapper', 'biker', 'goth', 'paramedic', 'executive', 'courier', 'janitor', 'barista', 'securityGuard'];
+const MONSTER_KEYS = ['vampire', 'werewolf', 'zombie', 'ghost', 'skeleton', 'mummy', 'swat', 'viking', 'minotaur', 'combatMech'];
 const ROSTER = [...STARTERS, ...ARCH_KEYS, ...MONSTER_KEYS];
 const UNLOCK_COST = 20;
 // English display names (platform faces US/English users — never ship Chinese here).
@@ -68,7 +68,10 @@ const NAMES = {
   worker:'Clerk', teen:'Teen', fitWoman:'Gym Rat', chef:'Chef', bigGuy:'Big Guy',
   cop:'Cop', nurse:'Nurse', firefighter:'Firefighter', construction:'Hard Hat', delivery:'Courier',
   cowboy:'Cowboy', punk:'Punk', rapper:'Rapper', biker:'Biker', goth:'Goth',
+  paramedic:'Paramedic', executive:'Executive', courier:'Messenger', janitor:'Janitor',
+  barista:'Barista', securityGuard:'Security',
   vampire:'Vampire', werewolf:'Werewolf', zombie:'Zombie', ghost:'Ghost', skeleton:'Skeleton', mummy:'Mummy',
+  swat:'SWAT', viking:'Viking', minotaur:'Minotaur', combatMech:'Mech',
 };
 let unlocked = new Set(STARTERS);
 let selectedChar = null;   // null = random from unlocked pool each run

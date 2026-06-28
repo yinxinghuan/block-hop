@@ -5,6 +5,10 @@ import * as THREE from 'three';
 import { P, box, darken } from '../lib/prims.js';
 import { MONSTERS } from './monsters.js';     // dedicated horror builders (after-dark crowd)
 import { ARCHETYPES } from './archetypes.js'; // dedicated profession + pop-culture builders (silhouette-driven, like MONSTERS)
+import { VILLAINS } from './villains.js';     // urban-villain register: swat, viking
+import { MECHS } from './mechs.js';           // sci-fi mech: combatMech
+import { MYTHIC } from './mythic.js';         // mythic: minotaur
+import { OFFICE } from './office.js';         // corporate office pack: executive, courier, janitor, barista, securityGuard
 
 const EYE = 0x241f1c, FRAME = 0x4a3526;   // facial micro-detail (literal, like animal faces)
 
@@ -209,4 +213,12 @@ export const CHARACTERS = {
   // ── fantasy customers: dedicated horror builders, distinct silhouettes (after-dark unlock).
   //    vampire · werewolf · zombie · ghost · skeleton · mummy — see builders/monsters.js ──
   ...MONSTERS,
+
+  // ── office ecosystem: corporate archetypes for the working-world crowd ──
+  ...OFFICE,
+
+  // ── boss / elite roster — heavy-build silhouettes with weapons + armor ──
+  ...VILLAINS,
+  ...MECHS,
+  ...MYTHIC,
 };

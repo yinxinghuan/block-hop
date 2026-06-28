@@ -718,6 +718,96 @@ export function goth(){
   return g;
 }
 
+// ─── PARAMEDIC: EMS FIELD MEDIC — navy tactical uniform with HIGH-VIS LIME STRIPES,
+//     white helmet with red cross, SHOULDER RADIO with antenna (silhouette extender),
+//     MEDICAL JUMP BAG on hip, stethoscope around neck. Distinct from nurse (WWII
+//     pin-up white dress) — this is the modern ambulance responder. ────────────
+export function paramedic(){
+  const g = new THREE.Group();
+  const BW=1.02, BD=0.54, torsoH=0.82, legH=0.88, shoeH=0.20;
+  const lx=0.22, hipY=shoeH+legH;
+  const legL=new THREE.Group(), legR=new THREE.Group();
+  legL.position.set(-lx,hipY,0); legR.position.set(lx,hipY,0);
+  // DARK NAVY tactical pants with reflective cuff stripes
+  const navy = darken(P.blue, 0.55);
+  [legL,legR].forEach(L=>{
+    L.add(box(0.34, shoeH, BD+0.02, P.ironD, 0, shoeH/2-hipY, 0.06));                      // black boots
+    L.add(box(0.30, legH, BD-0.06, navy,    0, (shoeH+legH/2)-hipY, 0));                    // navy pants
+    L.add(box(0.32, 0.06, BD-0.04, P.accent, 0, (shoeH+legH*0.18)-hipY, 0.03));              // lime reflective ankle band
+    L.add(box(0.32, 0.06, BD-0.04, P.accent, 0, (shoeH+legH*0.50)-hipY, 0.03));              // lime reflective knee band
+  });
+  const torsoY = hipY+torsoH/2;
+  // NAVY TACTICAL SHIRT
+  g.add(box(BW, torsoH, BD, navy, 0, torsoY, 0));
+  // HIGH-VIS LIME REFLECTIVE STRIPES across torso
+  g.add(box(BW+0.02, 0.08, BD+0.02, P.accent, 0, torsoY+0.18, 0.005));                      // chest stripe
+  g.add(box(BW+0.02, 0.08, BD+0.02, P.accent, 0, torsoY-0.14, 0.005));                      // waist stripe
+  // collar + chest detail — dark stand-up collar with radio mic clip
+  g.add(box(BW-0.16, 0.16, 0.04, P.ironD, 0, torsoY+torsoH/2-0.10, BD/2+0.02));
+  // ZIPPER line
+  g.add(box(0.04, torsoH-0.20, 0.04, darken(navy,0.3), 0, torsoY, BD/2+0.03));
+  // CHEST POCKETS with pen slots
+  g.add(box(0.22, 0.14, 0.04, darken(navy,0.3), -BW*0.28, torsoY+0.18, BD/2+0.03));
+  g.add(box(0.06, 0.04, 0.05, P.cream, -BW*0.28, torsoY+0.20, BD/2+0.06));                   // pen top
+  // EMS BADGE on left chest — silver shield with blue star of life
+  g.add(box(0.18, 0.16, 0.05, P.steel, -BW/2+0.22, torsoY+0.10, BD/2+0.035));
+  g.add(box(0.10, 0.10, 0.06, darken(P.blue,0.3), -BW/2+0.22, torsoY+0.10, BD/2+0.060));     // star core
+  // STETHOSCOPE around neck — tubes draping down the chest
+  g.add(box(0.08, 0.06, 0.08, P.ironD, 0, torsoY+torsoH/2-0.04, BD/2+0.04));                // Y-connector
+  g.add(box(0.04, 0.26, 0.04, P.ironD,  0.08, torsoY+torsoH/2-0.15, BD/2+0.04));            // L tube
+  g.add(box(0.04, 0.26, 0.04, P.ironD, -0.08, torsoY+torsoH/2-0.15, BD/2+0.04));            // R tube
+  // SHOULDER RADIO — black box with antenna sticking up (silhouette extender)
+  g.add(box(0.16, 0.20, 0.12, P.ironD, -BW/2-0.08, torsoY+torsoH/2-0.06, BD/2-0.04));        // radio body
+  g.add(box(0.06, 0.04, 0.08, P.gold,  -BW/2-0.08, torsoY+torsoH/2-0.04, BD/2-0.10));        // speaker grille
+  g.add(box(0.03, 0.03, 0.06, P.red,   -BW/2-0.08, torsoY+torsoH/2+0.04, BD/2-0.10, {e:P.red,ei:0.4})); // TX LED
+  // ANTENNA — thin tall rod (the silhouette cue)
+  g.add(box(0.04, 0.40, 0.04, P.steel, -BW/2-0.08, torsoY+torsoH/2+0.25, BD/2-0.06));
+  g.add(box(0.06, 0.05, 0.06, P.red,   -BW/2-0.08, torsoY+torsoH/2+0.44, BD/2-0.06, {e:P.red,ei:0.5})); // antenna tip glow
+  // DUTY BELT with pouches
+  g.add(box(BW+0.04, 0.12, BD+0.02, P.ironD, 0, torsoY-torsoH/2+0.05, 0));
+  g.add(box(0.20, 0.14, 0.06, P.steel, 0, torsoY-torsoH/2+0.05, BD/2+0.025));                // buckle
+  // MEDICAL JUMP BAG on right hip — big red tactical bag (silhouette extender)
+  g.add(box(0.28, 0.30, 0.20, P.red,  BW/2+0.08, torsoY-torsoH/2-0.04, 0.02));                // bag body
+  g.add(box(0.30, 0.08, 0.22, darken(P.red,0.3), BW/2+0.08, torsoY-torsoH/2+0.14, 0.02));     // bag top flap
+  g.add(box(0.18, 0.06, 0.10, P.cream, BW/2+0.08, torsoY-torsoH/2+0.14, 0.14));               // white cross on bag
+  g.add(box(0.06, 0.06, 0.06, P.cream, BW/2+0.08, torsoY-torsoH/2+0.14, 0.14));               // cross vertical
+  // GLOVES — bright blue nitrile on both hands (medical PPE)
+  const armW=0.24, armH=torsoH+legH*0.26, shoulderY=torsoY+torsoH/2;
+  const ax=BW/2+0.02+armW/2;
+  const armL=new THREE.Group(), armR=new THREE.Group();
+  armL.position.set(-ax,shoulderY,0); armR.position.set(ax,shoulderY,0);
+  const gloveBlue = 0x3898d4;
+  [armL,armR].forEach(A=>{
+    A.add(box(armW, armH*0.66, BD-0.08, navy,     0, (torsoY+torsoH/2-armH*0.33)-shoulderY, 0));
+    A.add(box(armW+0.02, 0.06, BD-0.06, P.accent, 0, (torsoY+torsoH/2-armH*0.68)-shoulderY, 0.02)); // sleeve reflective
+    A.add(box(armW, armH*0.20, BD-0.08, gloveBlue,0, (torsoY+torsoH/2-armH*0.84)-shoulderY, 0));     // blue nitrile glove
+  });
+  // head + face
+  const HW=0.54, HH=0.58, HDP=0.50;
+  const neckY = torsoY+torsoH/2+0.05;
+  g.add(box(0.28,0.12,0.26, P.skin, 0, neckY, 0));
+  const headY = neckY+0.06+HH/2;
+  g.add(box(HW,HH,HDP, P.skin, 0, headY, 0));
+  eyes(g, headY, HW, HDP);
+  // short brown hair under helmet
+  const topHead = headY+HH/2;
+  g.add(box(HW+0.02, 0.10, HDP+0.02, P.hairBrown, 0, topHead-0.03, 0));
+  // EMS HELMET — white rounded shell with red cross front badge + dark brim
+  g.add(box(HW+0.12, 0.20, HDP+0.10, P.cream, 0, topHead+0.12, 0));                           // white dome
+  g.add(box(HW+0.14, 0.04, HDP+0.22, P.cream, 0, topHead+0.03, -0.06));                        // rear flare
+  g.add(box(HW*0.80, 0.06, 0.18, darken(navy,0.2), 0, topHead+0.03, HDP/2+0.06));              // dark brim
+  // RED CROSS on helmet front
+  g.add(box(0.12, 0.06, 0.04, P.red, 0, topHead+0.14, HDP/2+0.08));                            // horizontal
+  g.add(box(0.06, 0.12, 0.04, P.red, 0, topHead+0.14, HDP/2+0.08));                            // vertical
+  // SAFETY GLASSES — clear wrap frames
+  g.add(box(0.18, 0.10, 0.04, darken(P.blue,0.1), -HW*0.26, headY+0.03, HDP/2+0.015));
+  g.add(box(0.18, 0.10, 0.04, darken(P.blue,0.1),  HW*0.26, headY+0.03, HDP/2+0.015));
+  g.add(box(0.08, 0.04, 0.03, P.steel, 0, headY+0.03, HDP/2+0.015));                          // bridge
+  rig(g, legL, legR, armL, armR);
+  finish(g);
+  return g;
+}
+
 // ─── export bundle — characters.js spreads this into CHARACTERS, same as MONSTERS ──
 export const ARCHETYPES = { cop, nurse, firefighter, construction, delivery,
-                            cowboy, punk, rapper, biker, goth };
+                            cowboy, punk, rapper, biker, goth, paramedic };
