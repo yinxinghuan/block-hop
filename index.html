@@ -244,6 +244,21 @@
     display:flex; flex-direction:column; gap:7px;
     overflow-y:auto; -webkit-overflow-scrolling:touch; padding:2px;
   }
+  .lb-download-state {
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:12px; padding:34px 18px 38px; text-align:center; color:var(--ink,#fff);
+  }
+  .lb-download-state .ico { font-size:34px; line-height:1; }
+  .lb-download-state .txt { max-width:260px; font-size:14px; line-height:1.45; opacity:.72; }
+  .lb-download-state .btn {
+    display:inline-flex; align-items:center; justify-content:center; min-height:40px;
+    padding:0 16px; border-radius:999px; border:1px solid rgba(255,255,255,.32);
+    background:rgba(255,255,255,.14); color:inherit; text-decoration:none;
+    font-size:13px; font-weight:700; letter-spacing:0; -webkit-tap-highlight-color:transparent;
+    transition:background .15s ease, transform .15s ease;
+  }
+  .lb-download-state .btn:active { background:rgba(255,255,255,.22); transform:scale(.97); }
+
   .lfrow {
     display:flex; align-items:center; gap:9px;
     border:2.5px solid var(--ink); border-radius:8px; background:#fffdf6;
@@ -597,6 +612,32 @@ reviveBtn.addEventListener('click', () => {
 const lbEl = $('#lb');
 const lbFullEl = $('#lbFull');
 const lblistEl = $('#lblist');
+
+const ALTERU_APP_URL = 'https://apps.apple.com/app/id6769646546';
+const LB_DOWNLOAD_TEXT = (navigator.language || '').toLowerCase().startsWith('zh')
+  ? { hint: '在 AlterU 中打开即可查看排行榜', cta: '下载 AlterU' }
+  : { hint: 'Open in AlterU to view the leaderboard.', cta: 'Get AlterU on the App Store' };
+function renderLBDownload(){
+  lbData = { rows: [], meId: '' };
+  if (lbEl) lbEl.classList.remove('show');
+  lblistEl.innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'lb-download-state';
+  const icon = document.createElement('span');
+  icon.className = 'ico';
+  icon.textContent = '🏆';
+  const text = document.createElement('span');
+  text.className = 'txt';
+  text.textContent = LB_DOWNLOAD_TEXT.hint;
+  const link = document.createElement('a');
+  link.className = 'btn';
+  link.href = ALTERU_APP_URL;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = LB_DOWNLOAD_TEXT.cta;
+  box.append(icon, text, link);
+  lblistEl.appendChild(box);
+}
 let lbData = { rows: [], meId: '' };
 
 function lbInitial(name){
@@ -653,6 +694,8 @@ function lbFullRow(r, isMe){
 }
 
 function openLbFull(){
+  const A = window.Aigram;
+  if (!A || !A.canRank) { renderLBDownload(); lbFullEl.classList.add('show'); return; }
   lblistEl.innerHTML = '';
   for (const r of lbData.rows) lblistEl.appendChild(lbFullRow(r, String(r.user_id) === lbData.meId));
   lbFullEl.classList.add('show');
@@ -672,7 +715,7 @@ window.__lbRender = renderLB;   // debug/screenshot hook
 
 async function refreshLB(){
   const A = window.Aigram;
-  if (!A || !A.canRank) return;
+  if (!A || !A.canRank) { if (lbFullEl.classList.contains('show')) renderLBDownload(); return; }
   try {
     const res = await A.callAigramAPI('/note/aigram/ai/game/rank/score/list/by/session_id?session_id=' + A.gameUuid, 'GET');
     const rows = Array.isArray(res) ? res : (res && res.data) || [];   // bare array vs {data:[]} both seen in the wild
