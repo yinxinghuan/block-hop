@@ -770,8 +770,7 @@ async function trySendBeatNotify(myScore){
   } catch (e) { /* silent */ }
 }
 
-refreshLB();
-
+if (window.Aigram?.isInAigram) refreshLB();
 // ── Character roster overlay ──────────────────────────────────────────────────
 const rosterEl = $('#roster');
 const rgridEl = $('#rgrid');

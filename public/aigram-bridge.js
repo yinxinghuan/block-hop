@@ -36,8 +36,8 @@
     params.get('session_id') ||
     null;
 
-  var isInAigram = !!(apiOrigin && telegramId);
-  var canRank    = isInAigram && !!gameUuid;
+  var isInAigram = !!(apiOrigin && telegramId && telegramId !== '__alteru_guest__');
+  var canRank    = !!gameUuid;
 
   function toB64(s)   { return btoa(unescape(encodeURIComponent(s))); }
   function fromB64(s) { return decodeURIComponent(escape(atob(s))); }
