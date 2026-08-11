@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <script src="./alteru-storage-scope.js" data-alteru-storage-scope data-game-storage-id="c9b8ddee-eb37-4a12-baa4-5793c612dd3f"></script>
 <meta name="game-uuid" content="c9b8ddee-eb37-4a12-baa4-5793c612dd3f" />
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
@@ -542,9 +543,9 @@ const padToggleEl = $('#padToggle');
 function setPad(on){
   padEl.classList.toggle('hidden', !on);
   padToggleEl.classList.toggle('on', on);
-  try { localStorage.setItem('bh_pad', on ? '1' : '0'); } catch (e) {}
+  try { alteruLocalStorage.setItem('bh_pad', on ? '1' : '0'); } catch (e) {}
 }
-setPad(localStorage.getItem('bh_pad') === '1');
+setPad(alteruLocalStorage.getItem('bh_pad') === '1');
 padToggleEl.addEventListener('click', () => setPad(padEl.classList.contains('hidden')));
 
 // ── Finger trail — echo every drag/tap so swiping reads as the native input ──

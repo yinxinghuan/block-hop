@@ -345,12 +345,12 @@ export function startGame(opts){
 
   // Restore save before the first buildPlayer so the selected character applies
   try {
-    bestDistance = +localStorage.getItem('bh.bestDist') || 0;
-    bestCoins    = +localStorage.getItem('bh.bestCoins') || 0;
-    coins        = +localStorage.getItem('bh.coins') || 0;
-    const saved = JSON.parse(localStorage.getItem('bh.unlocked') || '[]');
+    bestDistance = +alteruLocalStorage.getItem('bh.bestDist') || 0;
+    bestCoins    = +alteruLocalStorage.getItem('bh.bestCoins') || 0;
+    coins        = +alteruLocalStorage.getItem('bh.coins') || 0;
+    const saved = JSON.parse(alteruLocalStorage.getItem('bh.unlocked') || '[]');
     if (Array.isArray(saved)) for (const k of saved) if (ROSTER.includes(k)) unlocked.add(k);
-    const sel = localStorage.getItem('bh.selected');
+    const sel = alteruLocalStorage.getItem('bh.selected');
     if (sel && unlocked.has(sel)) selectedChar = sel;
   } catch(e) {}
   hud.setCoin(coins);
@@ -1351,7 +1351,7 @@ function tick(){
             coins++;
             SFX.coin();
             burst(wX(m.gx), 0.4, wZ(lane.gz), { count: 6, color: [0xffd95e, 0xfff2b0], speed: 1.6, up: 2.0, size: 0.1, life: 0.4 });
-            try { localStorage.setItem('bh.coins', String(coins)); } catch(e){}
+            try { alteruLocalStorage.setItem('bh.coins', String(coins)); } catch(e){}
             hud.setCoin(coins);
           }
         }
@@ -1610,11 +1610,11 @@ function die(reason){
   try {
     if (runDistance > bestDistance){
       bestDistance = runDistance;
-      localStorage.setItem('bh.bestDist', String(bestDistance));
+      alteruLocalStorage.setItem('bh.bestDist', String(bestDistance));
     }
     if (coins > bestCoins){
       bestCoins = coins;
-      localStorage.setItem('bh.bestCoins', String(bestCoins));
+      alteruLocalStorage.setItem('bh.bestCoins', String(bestCoins));
     }
   } catch(e){}
 
@@ -1700,7 +1700,7 @@ function revive(){
   if (coins < cost) return false;
   coins -= cost;
   reviveCount++;
-  try { localStorage.setItem('bh.coins', String(coins)); } catch(e){}
+  try { alteruLocalStorage.setItem('bh.coins', String(coins)); } catch(e){}
   hud.setCoin(coins);
 
   deathToken++;                 // cancel any pending death-menu timeout
@@ -1752,8 +1752,8 @@ function selectChar(key){
   if (key !== null && (!ROSTER.includes(key) || !unlocked.has(key))) return false;
   selectedChar = key;
   try {
-    if (key) localStorage.setItem('bh.selected', key);
-    else localStorage.removeItem('bh.selected');
+    if (key) alteruLocalStorage.setItem('bh.selected', key);
+    else alteruLocalStorage.removeItem('bh.selected');
   } catch(e){}
   applySelectedNow();
   return true;
@@ -1765,9 +1765,9 @@ function unlockChar(key){
   unlocked.add(key);
   selectedChar = key;               // a fresh purchase goes straight into play
   try {
-    localStorage.setItem('bh.coins', String(coins));
-    localStorage.setItem('bh.unlocked', JSON.stringify([...unlocked]));
-    localStorage.setItem('bh.selected', key);
+    alteruLocalStorage.setItem('bh.coins', String(coins));
+    alteruLocalStorage.setItem('bh.unlocked', JSON.stringify([...unlocked]));
+    alteruLocalStorage.setItem('bh.selected', key);
   } catch(e){}
   hud.setCoin(coins);
   SFX.coin();
